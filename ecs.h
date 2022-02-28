@@ -47,6 +47,40 @@ public:                                                   \
 		I64 alignment = 0;           /* Column element alignment */
 	};
 
+	using CompXtorFunc = void(*)(World* world, EntityID compID, size_t count, void* ptr);
+
+	namespace Reflect
+	{
+		struct ObjReflectInfo
+		{
+			CompXtorFunc ctor;
+			CompXtorFunc dtor;
+		};
+
+		template <typename T>
+		void DefaultCtor()
+		{
+
+		}
+
+		template <typename T>
+		void DefaultDtor()
+		{
+
+		}
+	}
+
+	template<typename C>
+	struct ComponentTypeInfo
+	{
+		static EntityID componentID;
+
+		static EntityID ComponentID(World& world);
+		static bool Registered();
+	};
+	template<typename C>
+	EntityID ComponentTypeInfo<C>::componentID = INVALID_ENTITY;
+
 	//////////////////////////////////////////////
 	// BuildIn components
 	struct InfoComponent
@@ -62,17 +96,6 @@ public:                                                   \
 		const char* name = nullptr;
 		U64 hash = 0;
 	};
-
-	template<typename C>
-	struct ComponentTypeInfo
-	{
-		static EntityID componentID;
-
-		static EntityID ComponentID(World& world);
-		static bool Registered();
-	};
-	template<typename C>
-	EntityID ComponentTypeInfo<C>::componentID = INVALID_ENTITY;
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Entity
