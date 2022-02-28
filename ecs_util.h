@@ -38,7 +38,7 @@ namespace Util
 #error "Not supported"
 #endif
 
-	inline I32 NextPowOf2(I32 n)
+	inline size_t NextPowOf2(size_t n)
 	{
 		n--;
 		n |= n >> 1;
@@ -53,7 +53,7 @@ namespace Util
     U64 HashFunc(const void* data, size_t length);
 
     template<typename T>
-    T* GetTypeFromVectorData(std::vector<U8>& vec, U32 index)
+    T* GetTypeFromVectorData(std::vector<U8>& vec, size_t index)
     {
         return reinterpret_cast<T*>(vec.data() + sizeof(T) * index);
     }
@@ -63,9 +63,9 @@ namespace Util
     class StorageVector
     {
     private:
-        U32 count = 0;
-        U32 capacity = 0;
-		U32 elemSize_ = 0;
+		size_t count = 0;
+		size_t capacity = 0;
+		size_t elemSize_ = 0;
         void* data = nullptr;
 
         static const size_t INITIAL_ELEM_COUNT = 2;
@@ -119,7 +119,7 @@ namespace Util
 
             if (count >= capacity)
             {
-                U32 newCapacity = capacity * 2;
+                size_t newCapacity = capacity * 2;
                 if (!newCapacity)
                     newCapacity = 2;
                 
@@ -130,16 +130,16 @@ namespace Util
             return PTR_OFFSET(data, offset + (count - 1) * elemSize);
         }
 
-        void* PushBackN(size_t elemSize, size_t offset, U32 num)
+        void* PushBackN(size_t elemSize, size_t offset, size_t num)
         {
             if (num == 1)
                 return PushBack(elemSize, offset);
 
 			assert(elemSize_ == elemSize);
 
-            int32_t maxCount = capacity;
-            int32_t oldCount = count;
-            int32_t newCount = oldCount + num;
+            size_t maxCount = capacity;
+            size_t oldCount = count;
+            size_t newCount = oldCount + num;
 
             if ((newCount - 1) >= maxCount)
             {
@@ -195,7 +195,7 @@ namespace Util
 			}
 		}
 
-		U32 Reserve(size_t elemSize, size_t offset, size_t elemCount)
+		size_t Reserve(size_t elemSize, size_t offset, size_t elemCount)
 		{
 			if (!data) 
 			{
@@ -205,7 +205,7 @@ namespace Util
 			else 
 			{
 				assert(elemSize_ == elemSize);
-				int32_t result = capacity;
+				size_t result = capacity;
 				if (elemCount < count)
 					elemCount = count;
 				
@@ -219,12 +219,12 @@ namespace Util
 			}
 		}
 
-		U32 GetCount()const
+		size_t GetCount()const
 		{
 			return count;
 		}
 
-		U32 GetCapacity()const
+		size_t GetCapacity()const
 		{
 			return capacity;
 		}
@@ -265,7 +265,7 @@ namespace Util
 		}
 
 		template<typename T>
-		U32 Reserve(size_t elemCount)
+		size_t Reserve(size_t elemCount)
 		{
 			return Reserve(sizeof(T), alignof(T), elemCount);
 		}
@@ -275,14 +275,14 @@ namespace Util
 	class SparseArray
 	{
 	private:
-		static const U32 DEFAULT_BLOCK_COUNT = 4096;
+		static const size_t DEFAULT_BLOCK_COUNT = 4096;
 		static const U64 ENTITY_MASK = 0xFFFFffffull;
 		static const U64 GENERATION_MASK = 0xFFFFull << 32;
 
 	public:
 		struct Chunk
 		{
-			U32* sparse = nullptr; // -> SparseArray::denseArray
+			size_t* sparse = nullptr; // -> SparseArray::denseArray
 			T* data = nullptr;
 			U8* flag = nullptr;
 		};
@@ -330,8 +330,8 @@ namespace Util
 
 		U64 NewIndex()
 		{
-			U32 denseCount = (U32)denseArray.size();
-			U32 index = count++;
+			size_t denseCount = denseArray.size();
+			size_t index = count++;
 			assert(index <= denseCount);
 			if (index < denseCount)
 				return denseArray[index];
@@ -353,8 +353,8 @@ namespace Util
 			if (chunk == nullptr)
 				return nullptr;
 
-			U32 offset = GetOffsetFromIndex(index);
-			U32 dense = chunk->sparse[offset];
+			size_t offset = GetOffsetFromIndex(index);
+			size_t dense = chunk->sparse[offset];
 			if (!(dense && (dense < count)))
 				return nullptr;
 
@@ -370,8 +370,8 @@ namespace Util
 		{
 			U64 gen = StripGeneration(&index);
 			Chunk* chunk = GetOrCreateChunk(GetChunkIndexFromIndex(index));
-			U32 offset = GetOffsetFromIndex(index);
-			U32 dense = chunk->sparse[offset];
+			size_t offset = GetOffsetFromIndex(index);
+			size_t dense = chunk->sparse[offset];
 			if (dense > 0)
 			{
 				if (dense == count) 
@@ -390,8 +390,8 @@ namespace Util
 			{
 				denseArray.emplace_back(0);
 
-				I32 denseCount = denseArray.size() - 1;	// skip new adding dense
-				I32 newCount = count++;
+				size_t denseCount = denseArray.size() - 1;	// skip new adding dense
+				size_t newCount = count++;
 				if (index >= *maxID)
 					*maxID = index;
 
@@ -424,7 +424,7 @@ namespace Util
 		}
 
 	private:
-		T* GetChunkOffset(Chunk* chunk, U32 offset)
+		T* GetChunkOffset(Chunk* chunk, size_t offset)
 		{
 			assert(chunk != nullptr);
 			assert(offset >= 0);
@@ -448,7 +448,7 @@ namespace Util
 			return gen;
 		}
 
-		U64 CreateKey(U32 dense)
+		U64 CreateKey(size_t dense)
 		{
 			U64 index = IncID();
 			GrowDense();
@@ -458,7 +458,7 @@ namespace Util
 			return index;
 		}
 
-		void AssignIndex(Chunk* chunk, U64 index, I32 dense)
+		void AssignIndex(Chunk* chunk, U64 index, size_t dense)
 		{
 			chunk->sparse[GetOffsetFromIndex(index)] = dense;
 			denseArray[dense] = index;
@@ -469,7 +469,7 @@ namespace Util
 			denseArray.push_back(0);
 		}
 
-		void SwapDense(Chunk* chunkA, I32 denseA, I32 denseB)
+		void SwapDense(Chunk* chunkA, size_t denseA, size_t denseB)
 		{
 			assert(denseA != denseB);
 			assert(denseA < denseArray.size() && denseB < denseArray.size());
@@ -486,17 +486,17 @@ namespace Util
 			return ++maxID[0];
 		}
 
-		__forceinline U32 GetChunkIndexFromIndex(U64 index)
+		__forceinline size_t GetChunkIndexFromIndex(U64 index)
 		{
-			return (U32)index >> 12;	// ~0xfff 4096
+			return (size_t)index >> 12;	// ~0xfff 4096
 		}
 
-		__forceinline U32 GetOffsetFromIndex(U64 index)
+		__forceinline size_t GetOffsetFromIndex(U64 index)
 		{
-			return (U32)index & 0xfff;  // 4096
+			return (size_t)index & 0xfff;  // 4096
 		}
 
-		Chunk* GetOrCreateChunk(U32 chunkIndex)
+		Chunk* GetOrCreateChunk(size_t chunkIndex)
 		{
 			Chunk* chunk = GetChunk(chunkIndex);
 			if (chunk == nullptr)
@@ -504,16 +504,16 @@ namespace Util
 			return chunk;
 		}
 
-		Chunk* GetChunk(U32 chunkIndex)
+		Chunk* GetChunk(size_t chunkIndex)
 		{
 			if (chunkIndex >= chunks.size())
 				return nullptr;
 			return &chunks[chunkIndex];
 		}
 
-		Chunk* CreateNewChunk(U32 chunkIndex)
+		Chunk* CreateNewChunk(size_t chunkIndex)
 		{
-			U32 oldSize = chunks.size();
+			size_t oldSize = chunks.size();
 			if (chunkIndex >= chunks.size())
 			{
 				chunks.resize(chunkIndex + 1);
@@ -523,7 +523,7 @@ namespace Util
 			Chunk* chunk = &chunks[chunkIndex];
 			assert(chunk->sparse == nullptr);
 			assert(chunk->data == nullptr);
-			chunk->sparse = (U32*)malloc(sizeof(U32) * DEFAULT_BLOCK_COUNT);
+			chunk->sparse = (size_t*)malloc(sizeof(size_t) * DEFAULT_BLOCK_COUNT);
 			chunk->data = (T*)malloc(sizeof(T) * DEFAULT_BLOCK_COUNT);
 			chunk->flag = (U8*)malloc(sizeof(U8) * DEFAULT_BLOCK_COUNT);
 
@@ -531,7 +531,7 @@ namespace Util
 			assert(chunk->data != nullptr);
 			assert(chunk->flag != nullptr);
 
-			memset(chunk->sparse, 0, sizeof(U32) * DEFAULT_BLOCK_COUNT);
+			memset(chunk->sparse, 0, sizeof(size_t) * DEFAULT_BLOCK_COUNT);
 			memset(chunk->data, 0, sizeof(T) * DEFAULT_BLOCK_COUNT);
 			memset(chunk->flag, 0, sizeof(U8) * DEFAULT_BLOCK_COUNT);
 			return chunk;
@@ -540,7 +540,7 @@ namespace Util
 	private:
 		std::vector<U64> denseArray;
 		std::vector<Chunk> chunks;
-		U32 count = 0;
+		size_t count = 0;
 		U64* maxID = nullptr;
 		U64 localMaxID = 0;
 	};

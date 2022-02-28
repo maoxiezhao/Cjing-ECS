@@ -29,9 +29,9 @@ namespace ECS
 	static const EntityID HI_COMPONENT_ID = 256;
 
 #define COMPONENT_INTERNAL(CLAZZ)                         \
-	static inline EntityID componentID = UINT32_MAX;      \
+	static inline ECS::EntityID componentID = UINT32_MAX;      \
 public:                                                   \
-	static EntityID GetComponentID() { return componentID; }                                
+	static ECS::EntityID GetComponentID() { return componentID; }                                
 
 #define COMPONENT(CLAZZ)								  \
 	COMPONENT_INTERNAL(CLAZZ)							  \
@@ -52,8 +52,8 @@ public:                                                   \
 	struct InfoComponent
 	{
 		COMPONENT(InfoComponent)
-		U32 size = 0;
-		U32 algnment = 0;
+		size_t size = 0;
+		size_t algnment = 0;
 	};
 	class NameComponent
 	{
@@ -63,16 +63,34 @@ public:                                                   \
 		U64 hash = 0;
 	};
 
+	template<typename C>
+	struct ComponentTypeInfo
+	{
+		static EntityID componentID;
+
+		static EntityID ComponentID(World& world);
+		static bool Registered();
+	};
+	template<typename C>
+	EntityID ComponentTypeInfo<C>::componentID = INVALID_ENTITY;
+
 	////////////////////////////////////////////////////////////////////////////////
 	//// Entity
 	////////////////////////////////////////////////////////////////////////////////
 
-    struct EntityDesc 
+    struct EntityCreateDesc 
 	{
         EntityID entity = INVALID_ENTITY;
         const char* name = nullptr;
 		bool useComponentID = false;	// For component id (0~256)
     };
+
+	struct ComponentCreateDesc
+	{
+		EntityCreateDesc entity = {};
+		size_t alignment = 0;
+		size_t size = 0;
+	};
 
 	class EntityBuilder
 	{
@@ -190,7 +208,7 @@ public:                                                   \
 
 		EntityID CreateEntityID(const char* name)
 		{
-			EntityDesc desc = {};
+			EntityCreateDesc desc = {};
 			desc.name = name;
 			desc.useComponentID = false;
 			return CreateEntityID(desc);
@@ -202,17 +220,21 @@ public:                                                   \
 		void EnsureEntity(EntityID id);
 
 		template<typename C>
-		void RegisterComponent(const char* name = nullptr)
+		EntityID RegisterComponent(const char* name = nullptr)
 		{
 			const char* n = name;
 			if (n == nullptr)
 				n = Util::Typename<C>();
 
-			EntityDesc desc = {};
-			desc.entity = INVALID_ENTITY;
-			desc.name = n;
-			desc.useComponentID = true;
-			C::componentID = InitNewComponent(desc);
+			ComponentCreateDesc desc = {};
+			desc.entity.entity = INVALID_ENTITY;
+			desc.entity.name = n;
+			desc.entity.useComponentID = true;
+			desc.size = sizeof(C);
+			desc.alignment = alignof(C);
+			EntityID ret = InitNewComponent(desc);
+			C::componentID = ret;
+			return ret;
 		}
 
 		InfoComponent* GetComponentInfo(EntityID compID);
@@ -229,8 +251,9 @@ public:                                                   \
 		template<typename C>
 		void AddComponent(EntityID entity, const C& comp)
 		{
-			C& dstComp = GetOrCreateComponent(entity, C::GetComponentID());
-			dstComp = comp;
+			EntityID compID = ComponentTypeInfo<C>::ComponentID(*this);
+			C* dstComp = static_cast<C*>(GetOrCreateComponent(entity, compID));
+			*dstComp = comp;
 		}
 
 	private:
@@ -251,19 +274,27 @@ public:                                                   \
 		};
 
 		// Entity methods
-		EntityID CreateEntityID(const EntityDesc& desc);
+		EntityID CreateEntityID(const EntityCreateDesc& desc);
 		EntityID CreateNewEntityID();
-		bool EntityTraverseAdd(EntityID entity, const EntityDesc& desc, bool nameAssigned, bool isNewEntity);
+		bool EntityTraverseAdd(EntityID entity, const EntityCreateDesc& desc, bool nameAssigned, bool isNewEntity);
 		IDRecord* EnsureIDRecord(EntityID id);
 		EntityID CreateNewComponentID();
 		bool MergeIDToEntityType(EntityType& entityType, EntityID compID);
 		IDRecord* FindIDRecord(EntityID id);
 		void MoveTableEntities(EntityID srcEntity, EntityTable* srcTable, EntityID dstEntity, EntityTable* dstTable, bool construct);
 		bool GetEntityInternalInfo(EntityInternalInfo& internalInfo, EntityID entity);
+		void SetEntityName(EntityID entity, const char* name);
 
 		// Component methods
-		EntityID InitNewComponent(const EntityDesc& desc);
-		InfoComponent* GetMutableComponentInfo(EntityID id, EntityID compID);
+		EntityID InitNewComponent(const ComponentCreateDesc& desc);
+		void SetComponent(EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove);
+
+		template<typename C>
+		C* GetComponentMutableByID(EntityID entity, EntityID compID, bool* added)
+		{
+			return static_cast<C*>(GetComponentMutableByID(entity, compID, added));
+		}
+		void* GetComponentMutableByID(EntityID entity, EntityID compID, bool* added);
 		void* GetOrCreateComponent(EntityID entity, EntityID compID);
 		void* GetComponentMutable(EntityID entity, EntityID compID, EntityInternalInfo* info, bool* isAdded);
 		void AddComponentForEntity(EntityID entity, EntityInternalInfo* info, EntityID compID);
@@ -281,9 +312,10 @@ public:                                                   \
 
 		EntityTable* TableAppend(EntityTable* table, EntityID compID, EntityTableDiff& diff);
 		EntityTable* TableTraverseAdd(EntityTable* table, EntityID compID, EntityTableDiff& diff);
-		EntityTableRecord* GetTableCache(EntityTableCache* cache, const EntityTable& table);
+		EntityTableRecord* GetTableRecord(EntityTable* table, EntityID compID);
+		EntityTableRecord* GetTableRecrodFromCache(EntityTableCache* cache, const EntityTable& table);
 		EntityTableRecord* InsertTableCache(EntityTableCache* cache, const EntityTable& table);
-		void CombitTables(EntityID entity, EntityInternalInfo* info, EntityTable* dstTable, EntityTableDiff& diff);
+		void CommitTables(EntityID entity, EntityInternalInfo* info, EntityTable* dstTable, EntityTableDiff& diff, bool construct);
 		U32 TableAppendNewEntity(EntityTable* table, EntityID entity, EntityInfo* info, bool construct);
 		void TableRegisterAddRef(EntityTable* table, EntityID id);
 		void TableRegisterRemoveRef(EntityTable* table, EntityID id);
@@ -300,8 +332,8 @@ public:                                                   \
 
 	private:
 		EntityBuilder entityBuilder = EntityBuilder(this);
-		U32 lastComponentID = 0;
-		U64 lastID = 0;
+		EntityID lastComponentID = 0;
+		EntityID lastID = 0;
 
 		// Entity
 		Util::SparseArray<EntityInfo> entityPool;
@@ -323,5 +355,25 @@ public:                                                   \
 	{
 		world->AddComponent(entity, comp);
 		return *this;
+	}
+
+	template<typename C>
+	inline EntityID ComponentTypeInfo<C>::ComponentID(World& world)
+	{
+		if (!Registered())
+		{
+			// Register component
+			componentID = world.RegisterComponent<C>();
+
+			// Init type reflect
+		}
+
+		return componentID;
+	}
+
+	template<typename C>
+	bool ComponentTypeInfo<C>::Registered()
+	{
+		return componentID != INVALID_ENTITY;
 	}
 }

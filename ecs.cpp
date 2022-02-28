@@ -103,7 +103,7 @@ namespace ECS
 		if (idRecord == nullptr)
 			return nullptr;
 
-		EntityTableRecord* tableRecord = GetTableCache(&idRecord->cache, *table->storageTable);
+		EntityTableRecord* tableRecord = GetTableRecrodFromCache(&idRecord->cache, *table->storageTable);
 		if (tableRecord == nullptr)
 			assert(0);
 
@@ -121,9 +121,13 @@ namespace ECS
 
 	void* World::GetComponentFromTable(EntityTable& table, I32 row, EntityID compID)
 	{
+		assert(compID != 0);
+		assert(row >= 0);
+		EntityTableRecord* tableRecord = GetTableRecord(&table, compID);
+		if (tableRecord == nullptr)
+			return nullptr;
 
-
-		return nullptr;
+		return GetComponentWFromTable(table, row, tableRecord->column);
 	}
 
 	void* World::GetComponentWFromTable(EntityTable& table, I32 row, I32 column)
@@ -177,11 +181,17 @@ namespace ECS
 		InitBuildInComponent(InfoComponent::GetComponentID(), sizeof(InfoComponent), alignof(InfoComponent), Util::Typename<InfoComponent>());
 		InitBuildInComponent(NameComponent::GetComponentID(), sizeof(NameComponent), alignof(NameComponent), Util::Typename<NameComponent>());
 
+		// Initialize build-in tags
+		//auto InitBuildInTag = [&](EntityID entity, const char* name) {
+		//	SetEntityName(entity, name);
+		//};
+		//InitBuildInTag(NameComponent::GetComponentID(), Util::Typename<NameComponent>());
+
 		lastComponentID = FirstUserComponentID;
 		lastID = FirstUserEntityID;
 	}
 
-	EntityID World::CreateEntityID(const EntityDesc& desc)
+	EntityID World::CreateEntityID(const EntityCreateDesc& desc)
 	{
 		const char* name = desc.name;
 		bool isNewEntity = false;
@@ -241,8 +251,8 @@ namespace ECS
 		// Always keep the order of ComponentIDs()
 
 		bool sameEntity = srcEntity == dstEntity;
-		U32 srcNumColumns = srcTable->storageType.size();
-		U32 dstNumColumns = dstTable->storageType.size();
+		U32 srcNumColumns = (U32)srcTable->storageType.size();
+		U32 dstNumColumns = (U32)dstTable->storageType.size();
 		U32 srcColumnIndex, dstColumnIndex;
 		for (srcColumnIndex = 0, dstColumnIndex = 0; (srcColumnIndex < srcNumColumns) && (dstColumnIndex < dstNumColumns); )
 		{
@@ -299,8 +309,8 @@ namespace ECS
 				}
 			}
 
-			dstComponentID += dstComponentID <= srcComponentID;
-			srcComponentID += dstComponentID >= srcComponentID;
+			srcColumnIndex += (dstComponentID >= srcComponentID);
+			dstColumnIndex += (dstComponentID <= srcComponentID);
 		}
 
 		// Construct remainning columns
@@ -319,22 +329,71 @@ namespace ECS
 		}
 	}
 
-	EntityID World::InitNewComponent(const EntityDesc& desc)
+	EntityID World::InitNewComponent(const ComponentCreateDesc& desc)
 	{
-		EntityID entityID = CreateEntityID(desc);
+		EntityID entityID = CreateEntityID(desc.entity);
 		if (entityID == INVALID_ENTITY)
 			return INVALID_ENTITY;
 
-		InfoComponent* info = GetMutableComponentInfo(entityID, InfoComponent::GetComponentID());
+		bool added = false;
+		InfoComponent* info = GetComponentMutableByID<InfoComponent>(entityID, InfoComponent::GetComponentID(), &added);
 		if (info == nullptr)
 			return INVALID_ENTITY;
+
+		if (added)
+		{
+			info->size = desc.size;
+			info->algnment = desc.alignment;
+		}
+		else
+		{
+			assert(info->size == desc.size);
+			assert(info->algnment == desc.alignment);
+		}
+		
+		if (entityID >= lastComponentID && entityID < HI_COMPONENT_ID)
+			lastComponentID = (U32)(entityID + 1);
 
 		return entityID;
 	}
 
-	InfoComponent* World::GetMutableComponentInfo(EntityID id, EntityID compID)
+	void World::SetComponent(EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove)
 	{
-		return nullptr;
+		EntityInternalInfo info = {};
+		void* dst = GetComponentMutable(entity, compID, &info, NULL);
+		assert(dst != NULL);
+		if (ptr) 
+		{
+			bool hasReflectInfo = false;
+			if (hasReflectInfo) 
+			{
+				if (isMove) 
+				{
+					// Do reflect::move
+				}
+				else 
+				{
+					// Do reflect::copy
+				}
+			}
+			else 
+			{
+				memcpy(dst, ptr, size);
+			}
+		}
+		else 
+		{
+			memset(dst, 0, size);
+		}
+	}
+
+	void* World::GetComponentMutableByID(EntityID entity, EntityID compID, bool* added)
+	{
+		EntityInternalInfo internalInfo = {};
+		void* ret = GetComponentMutable(entity, compID, &internalInfo, added);
+		assert(ret != nullptr);
+
+		return ret;
 	}
 
 	void* World::GetOrCreateComponent(EntityID entity, EntityID compID)
@@ -378,7 +437,7 @@ namespace ECS
 	}
 
 
-	bool World::EntityTraverseAdd(EntityID entity, const EntityDesc& desc, bool nameAssigned, bool isNewEntity)
+	bool World::EntityTraverseAdd(EntityID entity, const EntityCreateDesc& desc, bool nameAssigned, bool isNewEntity)
 	{
 		EntityTable* srcTable = nullptr, *table = nullptr;
 		EntityInternalInfo info = {};
@@ -393,14 +452,18 @@ namespace ECS
 		// Add name component
 		const char* name = desc.name;
 		if (name && !nameAssigned)
-		{
 			table = TableAppend(table, NameComponent::GetComponentID(), diff);
-		}
 
 		// Commit entity table
 		if (srcTable != table)
 		{
-			CombitTables(entity, &info, table, diff);
+			CommitTables(entity, &info, table, diff, true);
+		}
+
+		if (name && !nameAssigned)
+		{
+			SetEntityName(entity, name);
+			entityNameMap[Util::HashFunc(name, strlen(name))] = entity;
 		}
 
 		return true;
@@ -414,6 +477,7 @@ namespace ECS
 
 		IDRecord* ret = idRecordPool.Requset();
 		ret->recordID = idRecordPool.GetLastID();
+		idRecordMap[id] = ret;
 		return ret;
 	}
 
@@ -439,7 +503,7 @@ namespace ECS
 		// Create new table if the table dose not exsist
 		if (edge->next == nullptr)
 		{
-			edge->next = FindOrCreateTableWithID(table, compID, edge);
+			edge->next = FindOrCreateTableWithID(node, compID, edge);
 			assert(edge->next != nullptr);
 		}
 
@@ -447,12 +511,21 @@ namespace ECS
 		return edge->next;
 	}
 
+	EntityTableRecord* World::GetTableRecord(EntityTable* table, EntityID compID)
+	{
+		IDRecord* idRecord = FindIDRecord(compID);
+		if (idRecord == nullptr)
+			return nullptr;
+
+		return GetTableRecrodFromCache(&idRecord->cache, *table);
+	}
+
 	void World::AddComponentForEntity(EntityID entity, EntityInternalInfo* info, EntityID compID)
 	{
 		EntityTableDiff diff = {};
 		EntityTable* srcTable = info->table;
 		EntityTable* dstTable = TableTraverseAdd(srcTable, compID, diff);
-		CombitTables(entity, info, dstTable, diff);
+		CommitTables(entity, info, dstTable, diff, true);
 	}
 
 	EntityTable* World::FindOrCreateTableWithIDs(const std::vector<EntityID>& compIDs)
@@ -480,6 +553,14 @@ namespace ECS
 		internalInfo.row = info->row;
 		internalInfo.table = info->table;
 		return true;
+	}
+
+	void World::SetEntityName(EntityID entity, const char* name)
+	{
+		NameComponent nameComp = {};
+		nameComp.name = _strdup(name);
+		nameComp.hash = Util::HashFunc(name, strlen(name));
+		SetComponent(entity, NameComponent::GetComponentID(), sizeof(NameComponent), &nameComp, false);
 	}
 
 	EntityTable* World::FindOrCreateTableWithID(EntityTable* node, EntityID compID, EntityGraphEdge* edge)
@@ -554,7 +635,7 @@ namespace ECS
 		return edge;
 	}
 
-	EntityTableRecord* World::GetTableCache(EntityTableCache* cache, const EntityTable& table)
+	EntityTableRecord* World::GetTableRecrodFromCache(EntityTableCache* cache, const EntityTable& table)
 	{
 		auto it = cache->tableIDMap.find(table.tableID);
 		if (it == cache->tableIDMap.end())
@@ -582,7 +663,7 @@ namespace ECS
 	void World::DeleteEntityFromTable(EntityTable* table, U32 index, bool destruct)
 	{
 		assert(table != nullptr);
-		U32 count = table->entities.size();
+		U32 count = (U32)table->entities.size();
 		assert(count > 0);
 
 		// Remove target entity
@@ -601,8 +682,8 @@ namespace ECS
 			entityInfoToMove->row = index;
 
 		// Pending empty table
-		if (count == 0)
-			SetTableEmpty(table);
+		//if (count == 0)
+		//	SetTableEmpty(table);
 
 		if (index == count)
 		{
@@ -637,7 +718,9 @@ namespace ECS
 
 	void World::SetTableEmpty(EntityTable* table)
 	{
-		(*pendingTables.Ensure(table->tableID)) = table;
+		EntityTable** tablePtr = pendingTables.Ensure(table->tableID);
+		assert(tablePtr != nullptr);
+		(*tablePtr) = table;
 	}
 
 	void World::TableRemoveColumnLast(EntityTable* table)
@@ -695,18 +778,18 @@ namespace ECS
 
 	U32 World::TableAppendNewEntity(EntityTable* table, EntityID entity, EntityInfo* info, bool construct)
 	{
-		U32 index = table->entities.size();
+		U32 index = (U32)table->entities.size();
 
 		// Add a new entity for table
 		table->entities.push_back(entity);
 		table->entityInfos.push_back(info);
 		
 		// ensure that the columns have the same size as the entities and records.
-		U32 newCapacity = table->entities.capacity();
+		U32 newCapacity = (U32)table->entities.capacity();
 		for (int i = 0; i < table->storageType.size(); i++)
 		{
 			ComponentColumnData& columnData = table->storageColumns[i];
-			U32 oldCapacity = columnData.data.GetCapacity();
+			U32 oldCapacity = (U32)columnData.data.GetCapacity();
 			bool needRealloc = oldCapacity != newCapacity;
 			bool hasLifeCycle = false;
 			if (hasLifeCycle && needRealloc)
@@ -727,21 +810,19 @@ namespace ECS
 			}
 		}
 
-		if (index == 0)
-			SetTableEmpty(table);
+		//if (index == 0)
+		//	SetTableEmpty(table);
 
 		return index;
 	}
 
-	void World::CombitTables(EntityID entity, EntityInternalInfo* info, EntityTable* dstTable, EntityTableDiff& diff)
+	void World::CommitTables(EntityID entity, EntityInternalInfo* info, EntityTable* dstTable, EntityTableDiff& diff, bool construct)
 	{
 		EntityTable* srcTable = info->table;
 		if (srcTable == dstTable)
 			return;
 
-		assert(srcTable != nullptr);
 		assert(dstTable != nullptr);
-
 		if (srcTable != nullptr)
 		{
 			if (!dstTable->type.empty())
@@ -749,11 +830,11 @@ namespace ECS
 				EntityInfo* entityInfo = info->entityInfo;
 				assert(entityInfo != nullptr && entityInfo == entityPool.Get(entity));
 
-				// Add a new entity for dstTable (Reserve storage)
+				// Add a new entity for dstTable (Just reserve storage)
 				U32 newRow = TableAppendNewEntity(dstTable, entity, entityInfo, false);
 				assert(srcTable->entities.size() > info->row);
 				if (!srcTable->type.empty())
-					MoveTableEntities(entity, srcTable, entity, dstTable, false);
+					MoveTableEntities(entity, srcTable, entity, dstTable, construct);
 
 				entityInfo->row = newRow;
 				entityInfo->table = dstTable;
@@ -769,6 +850,20 @@ namespace ECS
 				// DeleteEntityFromTable(srcTable, info->row, diff);
 			}
 		}
+		else
+		{
+			EntityInfo* entityInfo = info->entityInfo;
+			if (entityInfo == nullptr)
+				entityInfo = entityPool.Ensure(entity);
+
+			U32 newRow = TableAppendNewEntity(dstTable, entity, entityInfo, construct);
+			entityInfo->row = newRow;
+			entityInfo->table = dstTable;
+
+			info->entityInfo = entityInfo;
+			info->row = newRow;
+			info->table = dstTable;
+		}
 	}
 
 	void World::AppendTableDiff(EntityTableDiff& dst, EntityTableDiff& src)
@@ -782,13 +877,71 @@ namespace ECS
 		if (t1 == t2)
 			return;
 
+		U32 addedCount = 0;
+		U32 removedCount = 0;
 		bool trivialEdge = true;
 
+		U32 srcNumColumns = (U32)t1->storageType.size();
+		U32 dstNumColumns = (U32)t2->storageType.size();
+		U32 srcColumnIndex, dstColumnIndex;
+		for (srcColumnIndex = 0, dstColumnIndex = 0; (srcColumnIndex < srcNumColumns) && (dstColumnIndex < dstNumColumns); )
+		{
+			EntityID srcComponentID = t1->storageType[srcColumnIndex];
+			EntityID dstComponentID = t2->storageType[dstColumnIndex];
 
+			if (srcComponentID < dstComponentID)
+			{
+				removedCount++;
+				trivialEdge = false;
+			}
+			else if (srcComponentID > dstComponentID)
+			{
+				addedCount++;
+				trivialEdge = false;
+			}
+
+			srcComponentID += srcComponentID <= dstComponentID;
+			dstComponentID += dstComponentID <= srcComponentID;
+		}
+
+		addedCount += dstNumColumns - dstColumnIndex;
+		removedCount += srcNumColumns - srcColumnIndex;
+
+		trivialEdge &= (addedCount + removedCount) < 1;
 		if (trivialEdge)
 		{
 			edge->diffIndex = -1;
 			return;
+		}
+		else
+		{
+			EntityTableDiff& diff = t1->node.diffs.emplace_back();
+			edge->diffIndex = t1->node.diffs.size();
+			if (addedCount > 0)
+				diff.added.reserve(addedCount);
+			if (removedCount > 0)
+				diff.removed.reserve(removedCount);
+
+			for (srcColumnIndex = 0, dstColumnIndex = 0; (srcColumnIndex < srcNumColumns) && (dstColumnIndex < dstNumColumns); )
+			{
+				EntityID srcComponentID = t1->storageType[srcColumnIndex];
+				EntityID dstComponentID = t2->storageType[dstColumnIndex];
+				if (srcComponentID < dstComponentID)
+					diff.removed.push_back(srcComponentID);
+				else if (srcComponentID > dstComponentID)
+					diff.added.push_back(dstComponentID);
+
+				srcComponentID += srcComponentID <= dstComponentID;
+				dstComponentID += dstComponentID <= srcComponentID;
+			}
+
+			for (; srcColumnIndex < srcNumColumns; srcColumnIndex++)
+				diff.removed.push_back(t1->storageType[srcColumnIndex]);
+			for (; dstColumnIndex < dstNumColumns; dstColumnIndex++)
+				diff.added.push_back(t2->storageType[dstColumnIndex]);
+
+			assert(diff.added.size() == addedCount);
+			assert(diff.removed.size() == removedCount);
 		}
 	}
 
@@ -799,8 +952,7 @@ namespace ECS
 
 		if (edge->diffIndex > 0)
 		{
-			assert(0);
-			// TODO...
+			diff = table->node.diffs[edge->diffIndex - 1];
 		}
 		else
 		{
@@ -827,10 +979,9 @@ namespace ECS
 	bool World::RegisterTable(World* world, EntityTable* table, EntityID id, I32 column)
 	{
 		// Create new table record (from compID record cache)
-
 		IDRecord* idRecord = world->EnsureIDRecord(id);
 		assert(idRecord != nullptr);
-		EntityTableRecord* tableRecord = world->GetTableCache(&idRecord->cache, *table);
+		EntityTableRecord* tableRecord = world->GetTableRecrodFromCache(&idRecord->cache, *table);
 		if (tableRecord != nullptr)
 		{
 			tableRecord->count++;
@@ -839,10 +990,9 @@ namespace ECS
 		{
 			tableRecord = world->InsertTableCache(&idRecord->cache, *table);
 			tableRecord->table = table;
-			tableRecord->column = column; // Index for component from entity type
+			tableRecord->column = column;	// Index for component from entity type
 			tableRecord->count = 1;
 		}
-
 		return true;
 	}
 
@@ -899,8 +1049,8 @@ namespace ECS
 		{
 			auto& typeToStorageMap = table->typeToStorageMap;
 			auto& storageToTypeMap = table->storageToTypeMap;
-			U32 numType = table->type.size();
-			U32 numStorageType = table->storageType.size();
+			U32 numType = (U32)table->type.size();
+			U32 numStorageType = (U32)table->storageType.size();
 
 			typeToStorageMap.resize(numType);
 			storageToTypeMap.resize(numStorageType);
@@ -924,7 +1074,7 @@ namespace ECS
 				s += (id == storageID);
 			}
 
-			//  Process remainder of type
+			//  Process remainning of type
 			for (; (t < numType); t++) {
 				typeToStorageMap[t] = -1;
 			}
