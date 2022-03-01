@@ -130,6 +130,7 @@ namespace Util
             return PTR_OFFSET(data, offset + (count - 1) * elemSize);
         }
 
+
         void* PushBackN(size_t elemSize, size_t offset, size_t num)
         {
             if (num == 1)
@@ -366,6 +367,25 @@ namespace Util
 			return GetChunkOffset(chunk, offset);
 		}
 
+		const T* Get(U64 index)const
+		{
+			const Chunk* chunk = GetChunk(GetChunkIndexFromIndex(index));
+			if (chunk == nullptr)
+				return nullptr;
+
+			size_t offset = GetOffsetFromIndex(index);
+			size_t dense = chunk->sparse[offset];
+			if (!(dense && (dense < count)))
+				return nullptr;
+
+			U64 gen = index & GENERATION_MASK;
+			U64 curGen = denseArray[dense] & GENERATION_MASK;
+			if (curGen != gen)
+				return nullptr;
+
+			return GetChunkOffset(chunk, offset);
+		}
+
 		T* Ensure(U64 index)
 		{
 			U64 gen = StripGeneration(&index);
@@ -440,6 +460,13 @@ namespace Util
 			return mem;
 		}
 
+		const T* GetChunkOffset(const Chunk* chunk, size_t offset)const
+		{
+			assert(chunk != nullptr);
+			assert(offset >= 0);
+			return chunk->data + offset;
+		}
+
 		U64 StripGeneration(uint64_t* indexOut)
 		{
 			U64 index = *indexOut;
@@ -486,12 +513,12 @@ namespace Util
 			return ++maxID[0];
 		}
 
-		__forceinline size_t GetChunkIndexFromIndex(U64 index)
+		__forceinline size_t GetChunkIndexFromIndex(U64 index) const
 		{
 			return (size_t)index >> 12;	// ~0xfff 4096
 		}
 
-		__forceinline size_t GetOffsetFromIndex(U64 index)
+		__forceinline size_t GetOffsetFromIndex(U64 index) const
 		{
 			return (size_t)index & 0xfff;  // 4096
 		}
@@ -505,6 +532,13 @@ namespace Util
 		}
 
 		Chunk* GetChunk(size_t chunkIndex)
+		{
+			if (chunkIndex >= chunks.size())
+				return nullptr;
+			return &chunks[chunkIndex];
+		}
+
+		const Chunk* GetChunk(size_t chunkIndex)const
 		{
 			if (chunkIndex >= chunks.size())
 				return nullptr;

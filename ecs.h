@@ -41,37 +41,34 @@ public:                                                   \
 
 	struct ComponentColumnData
 	{
-		//std::vector<U8> data;
 		Util::StorageVector data;    /* Column element data */
 		I64 size = 0;                /* Column element size */
 		I64 alignment = 0;           /* Column element alignment */
 	};
 
-	using CompXtorFunc = void(*)(World* world, EntityID compID, size_t count, void* ptr);
+	using CompXtorFunc = void(*)(World* world, EntityID* entities, size_t count, void* ptr);
+	using CompCopyFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, const void* srcPtr, void* dstPtr);
+	using CompMoveFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, void* srcPtr, void* dstPtr);
 
 	namespace Reflect
 	{
-		struct ObjReflectInfo
+		struct ReflectInfo
 		{
 			CompXtorFunc ctor;
 			CompXtorFunc dtor;
+			CompCopyFunc copy;
+			CompMoveFunc move;
 		};
 
-		template <typename T>
-		void DefaultCtor()
-		{
+		template<typename T, typename std::enable_if_t<std::is_trivial<T>::value == false>* = nullptr>
+		static void Register(World& world, EntityID compID);
 
-		}
-
-		template <typename T>
-		void DefaultDtor()
-		{
-
-		}
+		template<typename T, typename std::enable_if_t<std::is_trivial<T>::value == true>* = nullptr>
+		static void Register(World& world, EntityID compID);
 	}
 
 	template<typename C>
-	struct ComponentTypeInfo
+	struct ComponentTypeRegister
 	{
 		static EntityID componentID;
 
@@ -79,7 +76,16 @@ public:                                                   \
 		static bool Registered();
 	};
 	template<typename C>
-	EntityID ComponentTypeInfo<C>::componentID = INVALID_ENTITY;
+	EntityID ComponentTypeRegister<C>::componentID = INVALID_ENTITY;
+
+	struct ComponentTypeInfo
+	{
+		Reflect::ReflectInfo reflectInfo;
+		EntityID compID;
+		size_t alignment;
+		size_t size;
+		bool isSet;
+	};
 
 	//////////////////////////////////////////////
 	// BuildIn components
@@ -148,8 +154,8 @@ public:                                                   \
 
 	struct EntityTableDiff 
 	{
-		EntityIDs added;         // Components added between tables
-		EntityIDs removed;       // Components removed between tables
+		EntityIDs added;	// Components added between tables
+		EntityIDs removed;	// Components removed between tables
 	};
 
 	struct EntityGraphNode
@@ -180,7 +186,8 @@ public:                                                   \
 		// Entities
 		std::vector<EntityID> entities;
 		std::vector<EntityInfo*> entityInfos;
-		std::vector<ComponentColumnData> storageColumns;
+		std::vector<ComponentColumnData> storageColumns; // Comp1, Comp2, Comp3
+		std::vector<ComponentTypeInfo*> compTypeInfos;   // CompTypeInfo1, CompTypeInfo2, CompTypeInfo3
 	};
 
 	struct EntityTableRecord
@@ -274,10 +281,15 @@ public:                                                   \
 		template<typename C>
 		void AddComponent(EntityID entity, const C& comp)
 		{
-			EntityID compID = ComponentTypeInfo<C>::ComponentID(*this);
+			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
 			C* dstComp = static_cast<C*>(GetOrCreateComponent(entity, compID));
 			*dstComp = comp;
 		}
+
+		bool HasComponentTypeAction(EntityID compID)const;
+		ComponentTypeInfo* GetComponentTypInfo(EntityID compID);
+		const ComponentTypeInfo* GetComponentTypInfo(EntityID compID)const;
+		void SetComponentTypeAction(EntityID compID, Reflect::ReflectInfo& info);
 
 	private:
 		// BuildIn components
@@ -304,7 +316,7 @@ public:                                                   \
 		EntityID CreateNewComponentID();
 		bool MergeIDToEntityType(EntityType& entityType, EntityID compID);
 		IDRecord* FindIDRecord(EntityID id);
-		void MoveTableEntities(EntityID srcEntity, EntityTable* srcTable, EntityID dstEntity, EntityTable* dstTable, bool construct);
+		void MoveTableEntities(EntityID srcEntity, EntityTable* srcTable, I32 srcRow, EntityID dstEntity, EntityTable* dstTable, I32 dstRow, bool construct);
 		bool GetEntityInternalInfo(EntityInternalInfo& internalInfo, EntityID entity);
 		void SetEntityName(EntityID entity, const char* name);
 
@@ -327,11 +339,11 @@ public:                                                   \
 		EntityTable* FindOrCreateTableWithID(EntityTable* node, EntityID compID, EntityGraphEdge* edge);
 		EntityTable* CreateNewTable(EntityType entityType);
 		EntityGraphEdge* FindOrCreateEdge(EntityGraphEdges& egdes, EntityID compID);
-		void MoveTable(EntityTable* srcTable, EntityTable* dstTable);
 		void DeleteEntityFromTable(EntityTable* table, U32 index, bool destruct);
 		void SetTableEmpty(EntityTable* table);
 		void TableRemoveColumnLast(EntityTable* table);
 		void TableRemoveColumn(EntityTable* table, U32 index);
+		void TableGrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo& compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
 
 		EntityTable* TableAppend(EntityTable* table, EntityID compID, EntityTableDiff& diff);
 		EntityTable* TableTraverseAdd(EntityTable* table, EntityID compID, EntityTableDiff& diff);
@@ -368,10 +380,15 @@ public:                                                   \
 		Util::SparseArray<EntityTable*> pendingTables;
 		Hashmap<EntityTable*> tableMap;
 
-		// Component id
+		// Component
 		Hashmap<IDRecord*> idRecordMap;
 		Util::SparseArray<IDRecord> idRecordPool;
+		Util::SparseArray<ComponentTypeInfo> compTypePool;
 	};
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Static function
+	////////////////////////////////////////////////////////////////////////////////
 
 	template<class C>
 	inline const EntityBuilder& EntityBuilder::with(const C& comp) const
@@ -381,22 +398,187 @@ public:                                                   \
 	}
 
 	template<typename C>
-	inline EntityID ComponentTypeInfo<C>::ComponentID(World& world)
+	inline EntityID ComponentTypeRegister<C>::ComponentID(World& world)
 	{
 		if (!Registered())
 		{
 			// Register component
 			componentID = world.RegisterComponent<C>();
-
-			// Init type reflect
+			// Register reflect info
+			Reflect::Register<C>(world, componentID);
 		}
-
 		return componentID;
 	}
 
 	template<typename C>
-	bool ComponentTypeInfo<C>::Registered()
+	bool ComponentTypeRegister<C>::Registered()
 	{
 		return componentID != INVALID_ENTITY;
+	}
+
+	namespace Reflect
+	{
+		/// ////////////////////////////////////////////////////////////////////
+		/// Constructor
+		////////////////////////////////////////////////////////////////////////
+		template <typename T>
+		void DefaultCtor(World* world, EntityID* entities, size_t count, void* ptr)
+		{
+			T* objArr = static_cast<T*>(ptr);
+			for (size_t i = 0; i < count; i++)
+				new (&objArr[i]) T();
+		}
+
+		inline void IllegalCtor(World* world, EntityID* entities, size_t count, void* ptr)
+		{
+			assert(0);
+		}
+
+		template<typename T, std::enable_if_t<std::is_trivially_constructible_v<T>, int> = 0>
+		CompXtorFunc Ctor()
+		{
+			return nullptr;
+		}
+
+		template<typename T, std::enable_if_t<!std::is_default_constructible_v<T>, int> = 0>
+		CompXtorFunc Ctor()
+		{
+			return IllegalCtor;
+		}
+
+		template<typename T, std::enable_if_t<std::is_default_constructible_v<T> &&
+			!std::is_trivially_constructible_v<T>, int> = 0>
+		CompXtorFunc Ctor()
+		{
+			return DefaultCtor<T>;
+		}
+
+		/// ////////////////////////////////////////////////////////////////////
+		/// Destructor
+		////////////////////////////////////////////////////////////////////////
+		template <typename T>
+		void DefaultDtor(World* world, EntityID* entities, size_t count, void* ptr)
+		{
+			T* objArr = static_cast<T*>(ptr);
+			for (size_t i = 0; i < count; i++)
+				objArr[i].~T();
+		}
+
+		template<typename T, std::enable_if_t<std::is_trivially_destructible_v<T>, int> = 0>
+		CompXtorFunc Dtor()
+		{
+			return nullptr;
+		}
+
+		template<typename T, std::enable_if_t<!std::is_trivially_destructible_v<T>, int> = 0>
+			CompXtorFunc Dtor()
+		{
+			return DefaultDtor<T>;
+		}
+
+		/// ////////////////////////////////////////////////////////////////////
+		/// Copy
+		////////////////////////////////////////////////////////////////////////
+		template <typename T>
+		void DefaultCopy(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, const void* srcPtr, void* dstPtr)
+		{
+			const T* srcArr = static_cast<const T*>(srcPtr);
+			T* dstArr = static_cast<T*>(dstPtr);
+			for (size_t i = 0; i < count; i++)
+				dstArr[i] = srcArr[i];
+		}
+
+		inline void IllegalCopy(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, const void* srcPtr, void* dstPtr)
+		{
+			assert(0);
+		}
+
+		template<typename T, std::enable_if_t<std::is_trivially_copyable_v<T>, int> = 0>
+		CompCopyFunc Copy()
+		{
+			return nullptr;
+		}
+
+		template<typename T, std::enable_if_t<!std::is_copy_assignable_v<T>, int> = 0>
+		CompCopyFunc Copy()
+		{
+			return IllegalCopy;
+		}
+
+		template<typename T, std::enable_if_t<std::is_copy_assignable_v<T> && 
+			!std::is_trivially_copyable_v<T>, int> = 0>
+		CompCopyFunc Copy()
+		{
+			return DefaultCopy<T>;
+		}
+
+		/// ////////////////////////////////////////////////////////////////////
+		/// Copy ctor
+		////////////////////////////////////////////////////////////////////////
+		template <typename T>
+		void DefaultCopyMove(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, void* srcPtr, void* dstPtr)
+		{
+			T* srcArr = static_cast<T*>(srcPtr);
+			T* dstArr = static_cast<T*>(dstPtr);
+			for (size_t i = 0; i < count; i++)
+				dstArr[i] = std::move(srcArr[i]);
+		}
+
+		/// ////////////////////////////////////////////////////////////////////
+		/// Move
+		////////////////////////////////////////////////////////////////////////
+		template <typename T>
+		void DefaultMove(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, void* srcPtr, void* dstPtr)
+		{
+			T* srcArr = static_cast<T*>(srcPtr);
+			T* dstArr = static_cast<T*>(dstPtr);
+			for (size_t i = 0; i < count; i++)
+				dstArr[i] = std::move(srcArr[i]);
+		}
+
+		inline void IllegalMove(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, void* srcPtr, void* dstPtr)
+		{
+			assert(0);
+		}
+
+		template<typename T, std::enable_if_t<std::is_trivially_move_assignable_v<T>, int> = 0>
+		CompMoveFunc Move()
+		{
+			return nullptr;
+		}
+
+		template<typename T, std::enable_if_t<!std::is_move_assignable_v<T>, int> = 0>
+		CompMoveFunc Move()
+		{
+			return IllegalMove;
+		}
+
+		template<typename T, std::enable_if_t<std::is_move_assignable_v<T> &&
+			!std::is_trivially_move_assignable_v<T>, int> = 0>
+			CompMoveFunc Move()
+		{
+			return DefaultMove<T>;
+		}
+
+		/// ////////////////////////////////////////////////////////////////////
+		/// Move ctor
+		////////////////////////////////////////////////////////////////////////
+
+		template<typename T, typename std::enable_if_t<std::is_trivial<T>::value == false>*>
+		void Register(World& world, EntityID compID)
+		{
+			if (!world.HasComponentTypeAction(compID))
+			{
+				ReflectInfo info = {};
+				info.ctor = Ctor<T>();
+				info.dtor = Dtor<T>();
+				info.copy = Copy<T>();
+				info.move = Move<T>();
+				world.SetComponentTypeAction(compID, info);
+			}
+		}
+
+		template<typename T, typename std::enable_if_t<std::is_trivial<T>::value == true>*>
+		void Register(World& world, EntityID compID) {}
 	}
 }

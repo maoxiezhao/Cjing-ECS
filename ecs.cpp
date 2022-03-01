@@ -86,7 +86,7 @@ namespace ECS
 
 	InfoComponent* World::GetComponentInfo(EntityID compID)
 	{
-		return nullptr;
+		return static_cast<InfoComponent*>(GetComponent(compID, InfoComponent::GetComponentID()));
 	}
 
 	void* World::GetComponent(EntityID entity, EntityID compID)
@@ -136,6 +136,52 @@ namespace ECS
 		ComponentColumnData& columnData = table.storageColumns[column];
 		assert(columnData.size != 0);
 		return columnData.data.Get(columnData.size, columnData.alignment, row);
+	}
+
+	bool World::HasComponentTypeAction(EntityID compID) const
+	{
+		return GetComponentTypInfo(compID) != nullptr;
+	}
+
+	ComponentTypeInfo* World::GetComponentTypInfo(EntityID compID)
+	{
+		assert(compID >= 0);
+		return compTypePool.Get(compID);
+	}
+
+	const ComponentTypeInfo* World::GetComponentTypInfo(EntityID compID) const
+	{
+		assert(compID >= 0);
+		return compTypePool.Get(compID);
+	}
+
+	void World::SetComponentTypeAction(EntityID compID, Reflect::ReflectInfo& info)
+	{
+		InfoComponent* infoComponent = GetComponentInfo(compID);
+		if (infoComponent == nullptr)
+			return;
+
+		ComponentTypeInfo* compTypeInfo = GetComponentTypInfo(compID);
+		if (compTypeInfo == nullptr)
+		{
+			compTypeInfo = compTypePool.Ensure(compID);
+			assert(compTypeInfo != nullptr);
+			compTypeInfo->isSet = false;
+		}
+
+		if (compTypeInfo->isSet)
+		{
+			assert(compTypeInfo->reflectInfo.ctor != nullptr);
+			assert(compTypeInfo->reflectInfo.dtor != nullptr);
+		}
+		else
+		{
+			compTypeInfo->reflectInfo = info;
+			compTypeInfo->compID = compID;
+			compTypeInfo->size = infoComponent->size;
+			compTypeInfo->alignment = infoComponent->algnment;
+			compTypeInfo->isSet = true;
+		}
 	}
 
 	void World::InitBuildInComponents()
@@ -235,21 +281,40 @@ namespace ECS
 		{
 			do {
 				ret = lastComponentID++;
-			}
-			while (EntityIDAlive(ret) != INVALID_ENTITY && ret <= HI_COMPONENT_ID);
+			} while (EntityIDAlive(ret) != INVALID_ENTITY && ret <= HI_COMPONENT_ID);
 		}
 
 		if (ret == INVALID_ENTITY || ret >= HI_COMPONENT_ID)
 			ret = CreateNewEntityID();
-
 		return ret;
 	}
 
-	void World::MoveTableEntities(EntityID srcEntity, EntityTable* srcTable, EntityID dstEntity, EntityTable* dstTable, bool construct)
+	void World::MoveTableEntities(EntityID srcEntity, EntityTable* srcTable, I32 srcRow, EntityID dstEntity, EntityTable* dstTable, I32 dstRow, bool construct)
 	{
+		auto CompConstruct = [&](EntityTable* table, EntityID entity, U32 columnIndex, U32 row)
+		{
+			ComponentTypeInfo* compTypeInfo = table->compTypeInfos[columnIndex];
+			if (compTypeInfo != nullptr && compTypeInfo->reflectInfo.ctor != nullptr)
+			{
+				ComponentColumnData& columnData = table->storageColumns[columnIndex];
+				void* mem = columnData.data.Get(columnData.size, columnData.alignment, row);
+				compTypeInfo->reflectInfo.ctor(this, &entity, 1, mem);
+			}
+		};
+
+		auto CompDestruct = [&](EntityTable* table, EntityID entity, U32 columnIndex, U32 row)
+		{
+			ComponentTypeInfo* compTypeInfo = table->compTypeInfos[columnIndex];
+			if (compTypeInfo != nullptr && compTypeInfo->reflectInfo.dtor != nullptr)
+			{
+				ComponentColumnData& columnData = table->storageColumns[columnIndex];
+				void* mem = columnData.data.Get(columnData.size, columnData.alignment, row);
+				compTypeInfo->reflectInfo.dtor(this, &entity, 1, mem);
+			}
+		};
+
 		// Move entites from srcTable to dstTable
 		// Always keep the order of ComponentIDs()
-
 		bool sameEntity = srcEntity == dstEntity;
 		U32 srcNumColumns = (U32)srcTable->storageType.size();
 		U32 dstNumColumns = (U32)dstTable->storageType.size();
@@ -268,12 +333,13 @@ namespace ECS
 				assert(srcMem != nullptr);
 				assert(dstMem != nullptr);
 				
+				ComponentTypeInfo* compTypeInfo = srcTable->compTypeInfos[srcColumnIndex];
+				assert(compTypeInfo != nullptr);
 				if (sameEntity)
 				{
-					bool typeHasMove = false;
-					if (typeHasMove)
+					if (0)
 					{
-						// TODO: Call Reflect::Move();
+						// TODO: Call Reflect::MoveCtor();
 					}
 					else
 					{
@@ -286,7 +352,7 @@ namespace ECS
 					bool typeHasCopy = false;
 					if (typeHasCopy)
 					{
-						// TODO: Call Reflect::Copy();
+						// TODO: Call Reflect::CopyCtor();
 					}
 					else
 					{
@@ -299,13 +365,11 @@ namespace ECS
 				if (dstComponentID < srcComponentID)
 				{
 					if (construct)
-					{
-						// TODO: Call Reflect::Ctor()
-					}
+						CompConstruct(dstTable, dstEntity, dstColumnIndex, dstRow);
 				}
 				else
 				{
-					// TODO: Call Reflect::Dtor()
+					CompDestruct(srcTable, srcEntity, srcColumnIndex, srcRow);
 				}
 			}
 
@@ -317,16 +381,12 @@ namespace ECS
 		if (construct)
 		{
 			for (; dstColumnIndex < dstNumColumns; dstColumnIndex++)
-			{
-				// TODO: Call Reflect::Ctor()
-			}
+				CompConstruct(dstTable, dstEntity, dstColumnIndex, dstRow);
 		}
 
 		// Destruct remainning columns
 		for (; srcColumnIndex < srcNumColumns; srcColumnIndex++)
-		{
-			// TODO: Call Reflect::Dtor()
-		}
+			CompDestruct(srcTable, srcEntity, srcColumnIndex, srcRow);
 	}
 
 	EntityID World::InitNewComponent(const ComponentCreateDesc& desc)
@@ -364,16 +424,20 @@ namespace ECS
 		assert(dst != NULL);
 		if (ptr) 
 		{
-			bool hasReflectInfo = false;
-			if (hasReflectInfo) 
+			ComponentTypeInfo* compTypeInfo = GetComponentTypInfo(compID);
+			if (compTypeInfo != nullptr)
 			{
 				if (isMove) 
 				{
-					// Do reflect::move
+					if (compTypeInfo->reflectInfo.move != nullptr)
+						compTypeInfo->reflectInfo.move(this, &entity, &entity, 1, (void*)ptr, dst);
+					else
+						memcpy(dst, ptr, size);
 				}
 				else 
 				{
-					// Do reflect::copy
+					if (compTypeInfo->reflectInfo.copy != nullptr)
+						compTypeInfo->reflectInfo.copy(this, &entity, &entity, 1, ptr, dst);
 				}
 			}
 			else 
@@ -656,8 +720,26 @@ namespace ECS
 		return ret;
 	}
 
-	void World::MoveTable(EntityTable* srcTable, EntityTable* dstTable)
+	void World::TableGrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo& compTypeInfo, size_t addCount, size_t newCapacity, bool construct)
 	{
+		U32 oldCount = columnData.data.GetCount();
+		U32 oldCapacity = (U32)columnData.data.GetCapacity();
+		bool needRealloc = oldCapacity != newCapacity;
+		bool typeHasMove = false;
+		if (typeHasMove && needRealloc)
+		{
+			assert(0);
+			// TODO...
+		}
+		else
+		{
+			if (needRealloc)
+				columnData.data.Reserve(columnData.size, columnData.alignment, newCapacity);
+
+			void* mem = columnData.data.PushBackN(columnData.size, columnData.alignment, addCount);
+			if (construct && compTypeInfo.reflectInfo.ctor != nullptr)
+				compTypeInfo.reflectInfo.ctor(this, &entities[oldCount], addCount, mem);
+		}
 	}
 
 	void World::DeleteEntityFromTable(EntityTable* table, U32 index, bool destruct)
@@ -687,13 +769,19 @@ namespace ECS
 
 		if (index == count)
 		{
-			// Is the last element
+			// Destruct the last data of column
 			bool hasDestructor = false;
 			if (destruct && hasDestructor)
 			{
 				for (int i = 0; i < table->storageType.size(); i++)
 				{
-					// Call Reflect::Dtor
+					ComponentTypeInfo* compTypeInfo = table->compTypeInfos[i];
+					if (compTypeInfo != nullptr && compTypeInfo->reflectInfo.dtor != nullptr)
+					{
+						auto columnData = table->storageColumns[i];
+						void* mem = columnData.data.Get(columnData.size, columnData.alignment, count);
+						compTypeInfo->reflectInfo.dtor(this, &entityToDelete, 1, mem);
+					}
 				}
 			}
 			TableRemoveColumnLast(table);
@@ -701,12 +789,22 @@ namespace ECS
 		else
 		{
 			// Swap target element and last element, then remove last element
-			bool hasDestructor = false;
-			if (destruct && hasDestructor)
+			if (destruct)
 			{
 				for (int i = 0; i < table->storageType.size(); i++)
 				{
-					// Call Reflect::Dtor
+					bool hasMoveDestructor = false;
+					if (hasMoveDestructor)
+					{
+						// Todo: Reflect::MoveDtro
+					}
+					else
+					{
+						auto columnData = table->storageColumns[i];
+						void* srcMem = columnData.data.Get(columnData.size, columnData.alignment, count);
+						void* dstMem = columnData.data.Get(columnData.size, columnData.alignment, index);
+						memcpy(dstMem, srcMem, columnData.size);
+					}
 				}
 			}
 			else
@@ -789,29 +887,11 @@ namespace ECS
 		for (int i = 0; i < table->storageType.size(); i++)
 		{
 			ComponentColumnData& columnData = table->storageColumns[i];
-			U32 oldCapacity = (U32)columnData.data.GetCapacity();
-			bool needRealloc = oldCapacity != newCapacity;
-			bool hasLifeCycle = false;
-			if (hasLifeCycle && needRealloc)
-			{
-				assert(0);
-				// TODO...
-			}
-			else
-			{
-				if (needRealloc)
-					columnData.data.Reserve(columnData.size, columnData.alignment, newCapacity);
+			ComponentTypeInfo* compTypeInfo = table->compTypeInfos[i];
+			assert(compTypeInfo != nullptr);
 
-				void* mem = columnData.data.PushBack(columnData.size, columnData.alignment);
-				if (construct)
-				{
-					// TODO...
-				}
-			}
+			TableGrowColumn(table->entities, columnData, *compTypeInfo, 1, newCapacity, construct);
 		}
-
-		//if (index == 0)
-		//	SetTableEmpty(table);
 
 		return index;
 	}
@@ -834,7 +914,7 @@ namespace ECS
 				U32 newRow = TableAppendNewEntity(dstTable, entity, entityInfo, false);
 				assert(srcTable->entities.size() > info->row);
 				if (!srcTable->type.empty())
-					MoveTableEntities(entity, srcTable, entity, dstTable, construct);
+					MoveTableEntities(entity, srcTable, info->row, entity, dstTable, newRow, construct);
 
 				entityInfo->row = newRow;
 				entityInfo->table = dstTable;
