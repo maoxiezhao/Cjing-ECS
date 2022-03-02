@@ -46,9 +46,11 @@ public:                                                   \
 		I64 alignment = 0;           /* Column element alignment */
 	};
 
-	using CompXtorFunc = void(*)(World* world, EntityID* entities, size_t count, void* ptr);
-	using CompCopyFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, const void* srcPtr, void* dstPtr);
-	using CompMoveFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, void* srcPtr, void* dstPtr);
+	using CompXtorFunc = void(*)(World* world, EntityID* entities, size_t size, size_t count, void* ptr);
+	using CompCopyFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr);
+	using CompMoveFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr);
+	using CompCopyCtorFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr);
+	using CompMoveCtorFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr);
 
 	namespace Reflect
 	{
@@ -58,6 +60,8 @@ public:                                                   \
 			CompXtorFunc dtor;
 			CompCopyFunc copy;
 			CompMoveFunc move;
+			CompCopyCtorFunc copyCtor;
+			CompMoveCtorFunc moveCtor;
 		};
 
 		template<typename T, typename std::enable_if_t<std::is_trivial<T>::value == false>* = nullptr>
@@ -249,28 +253,8 @@ public:                                                   \
 		void DeleteEntity(EntityID id);
 		void EnsureEntity(EntityID id);
 
-		template<typename C>
-		EntityID RegisterComponent(const char* name = nullptr)
-		{
-			const char* n = name;
-			if (n == nullptr)
-				n = Util::Typename<C>();
-
-			ComponentCreateDesc desc = {};
-			desc.entity.entity = INVALID_ENTITY;
-			desc.entity.name = n;
-			desc.entity.useComponentID = true;
-			desc.size = sizeof(C);
-			desc.alignment = alignof(C);
-			EntityID ret = InitNewComponent(desc);
-			C::componentID = ret;
-			return ret;
-		}
-
 		InfoComponent* GetComponentInfo(EntityID compID);
 		void* GetComponent(EntityID entity, EntityID compID);
-		void* GetComponentFromTable(EntityTable& table, I32 row, EntityID compID);
-		void* GetComponentWFromTable(EntityTable& table, I32 row, I32 column);
 
 		template<typename C>
 		C* GetComponent(EntityID entity)
@@ -289,9 +273,27 @@ public:                                                   \
 		bool HasComponentTypeAction(EntityID compID)const;
 		ComponentTypeInfo* GetComponentTypInfo(EntityID compID);
 		const ComponentTypeInfo* GetComponentTypInfo(EntityID compID)const;
-		void SetComponentTypeAction(EntityID compID, Reflect::ReflectInfo& info);
+		void SetComponentTypeAction(EntityID compID, const Reflect::ReflectInfo& info);
 
 	private:
+		template<typename C>
+		EntityID RegisterComponent(const char* name = nullptr)
+		{
+			const char* n = name;
+			if (n == nullptr)
+				n = Util::Typename<C>();
+
+			ComponentCreateDesc desc = {};
+			desc.entity.entity = INVALID_ENTITY;
+			desc.entity.name = n;
+			desc.entity.useComponentID = true;
+			desc.size = sizeof(C);
+			desc.alignment = alignof(C);
+			EntityID ret = InitNewComponent(desc);
+			C::componentID = ret;
+			return ret;
+		}
+
 		// BuildIn components
 		void RegisterBuildInComponents()
 		{
@@ -299,6 +301,9 @@ public:                                                   \
 			RegisterComponent<NameComponent>();
 		}
 		void InitBuildInComponents();
+
+		void* GetComponentFromTable(EntityTable& table, I32 row, EntityID compID);
+		void* GetComponentWFromTable(EntityTable& table, I32 row, I32 column);
 
 	private:
 		struct EntityInternalInfo
@@ -343,7 +348,7 @@ public:                                                   \
 		void SetTableEmpty(EntityTable* table);
 		void TableRemoveColumnLast(EntityTable* table);
 		void TableRemoveColumn(EntityTable* table, U32 index);
-		void TableGrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo& compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
+		void TableGrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
 
 		EntityTable* TableAppend(EntityTable* table, EntityID compID, EntityTableDiff& diff);
 		EntityTable* TableTraverseAdd(EntityTable* table, EntityID compID, EntityTableDiff& diff);
@@ -422,14 +427,14 @@ public:                                                   \
 		/// Constructor
 		////////////////////////////////////////////////////////////////////////
 		template <typename T>
-		void DefaultCtor(World* world, EntityID* entities, size_t count, void* ptr)
+		void DefaultCtor(World* world, EntityID* entities, size_t size, size_t count, void* ptr)
 		{
 			T* objArr = static_cast<T*>(ptr);
 			for (size_t i = 0; i < count; i++)
 				new (&objArr[i]) T();
 		}
 
-		inline void IllegalCtor(World* world, EntityID* entities, size_t count, void* ptr)
+		inline void IllegalCtor(World* world, EntityID* entities, size_t size, size_t count, void* ptr)
 		{
 			assert(0);
 		}
@@ -457,7 +462,7 @@ public:                                                   \
 		/// Destructor
 		////////////////////////////////////////////////////////////////////////
 		template <typename T>
-		void DefaultDtor(World* world, EntityID* entities, size_t count, void* ptr)
+		void DefaultDtor(World* world, EntityID* entities, size_t size, size_t count, void* ptr)
 		{
 			T* objArr = static_cast<T*>(ptr);
 			for (size_t i = 0; i < count; i++)
@@ -480,7 +485,7 @@ public:                                                   \
 		/// Copy
 		////////////////////////////////////////////////////////////////////////
 		template <typename T>
-		void DefaultCopy(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, const void* srcPtr, void* dstPtr)
+		void DefaultCopy(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr)
 		{
 			const T* srcArr = static_cast<const T*>(srcPtr);
 			T* dstArr = static_cast<T*>(dstPtr);
@@ -488,7 +493,7 @@ public:                                                   \
 				dstArr[i] = srcArr[i];
 		}
 
-		inline void IllegalCopy(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, const void* srcPtr, void* dstPtr)
+		inline void IllegalCopy(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr)
 		{
 			assert(0);
 		}
@@ -516,19 +521,38 @@ public:                                                   \
 		/// Copy ctor
 		////////////////////////////////////////////////////////////////////////
 		template <typename T>
-		void DefaultCopyMove(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, void* srcPtr, void* dstPtr)
+		void DefaultCopyCtor(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr)
 		{
-			T* srcArr = static_cast<T*>(srcPtr);
+			const T* srcArr = static_cast<const T*>(srcPtr);
 			T* dstArr = static_cast<T*>(dstPtr);
 			for (size_t i = 0; i < count; i++)
-				dstArr[i] = std::move(srcArr[i]);
+				new (&dstArr[i]) T(srcArr[i]);
+		}
+
+		template<typename T, std::enable_if_t<std::is_trivially_copy_constructible_v<T>, int> = 0>
+		CompCopyCtorFunc CopyCtor()
+		{
+			return nullptr;
+		}
+
+		template<typename T, std::enable_if_t<!std::is_copy_constructible_v<T>, int> = 0>
+			CompCopyCtorFunc CopyCtor()
+		{
+			return IllegalCopy;
+		}
+
+		template<typename T, std::enable_if_t<std::is_copy_constructible_v<T> &&
+			!std::is_trivially_copy_constructible_v<T>, int> = 0>
+		CompCopyCtorFunc CopyCtor()
+		{
+			return DefaultCopyCtor<T>;
 		}
 
 		/// ////////////////////////////////////////////////////////////////////
 		/// Move
 		////////////////////////////////////////////////////////////////////////
 		template <typename T>
-		void DefaultMove(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, void* srcPtr, void* dstPtr)
+		void DefaultMove(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr)
 		{
 			T* srcArr = static_cast<T*>(srcPtr);
 			T* dstArr = static_cast<T*>(dstPtr);
@@ -536,7 +560,7 @@ public:                                                   \
 				dstArr[i] = std::move(srcArr[i]);
 		}
 
-		inline void IllegalMove(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t count, void* srcPtr, void* dstPtr)
+		inline void IllegalMove(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr)
 		{
 			assert(0);
 		}
@@ -563,6 +587,33 @@ public:                                                   \
 		/// ////////////////////////////////////////////////////////////////////
 		/// Move ctor
 		////////////////////////////////////////////////////////////////////////
+		template <typename T>
+		void DefaultMoveCtor(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr)
+		{
+			T* srcArr = static_cast<T*>(srcPtr);
+			T* dstArr = static_cast<T*>(dstPtr);
+			for (size_t i = 0; i < count; i++)
+				new (&dstArr[i]) T(std::move(srcArr[i]));
+		}
+
+		template<typename T, std::enable_if_t<std::is_trivially_move_constructible_v<T>, int> = 0>
+		CompMoveCtorFunc MoveCtor()
+		{
+			return nullptr;
+		}
+
+		template<typename T, std::enable_if_t<!std::is_move_constructible_v<T>, int> = 0>
+		CompMoveCtorFunc MoveCtor()
+		{
+			return IllegalMove;
+		}
+
+		template<typename T, std::enable_if_t<std::is_move_constructible_v<T> &&
+			!std::is_trivially_move_constructible_v<T>, int> = 0>
+		CompMoveCtorFunc MoveCtor()
+		{
+			return DefaultMoveCtor<T>;
+		}
 
 		template<typename T, typename std::enable_if_t<std::is_trivial<T>::value == false>*>
 		void Register(World& world, EntityID compID)
@@ -574,6 +625,8 @@ public:                                                   \
 				info.dtor = Dtor<T>();
 				info.copy = Copy<T>();
 				info.move = Move<T>();
+				info.copyCtor = CopyCtor<T>();
+				info.moveCtor = MoveCtor<T>();
 				world.SetComponentTypeAction(compID, info);
 			}
 		}
