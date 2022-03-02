@@ -329,6 +329,11 @@ namespace Util
 			localMaxID = 0;
 		}
 
+		size_t Count()const
+		{
+			return count - 1;
+		}
+
 		U64 NewIndex()
 		{
 			size_t denseCount = denseArray.size();
