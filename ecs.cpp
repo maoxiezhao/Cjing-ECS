@@ -103,7 +103,7 @@ namespace ECS
 		I32 row = 0;
 	};
 
-	struct IDRecord
+	struct ComponentRecord
 	{
 		EntityTableCache cache;
 		Hashmap<EntityTable*> addRefs;
@@ -136,8 +136,6 @@ namespace ECS
 		EntityType type;
 		EntityGraphNode node;
 		bool isInitialized = false;
-		I32* dirtyState = nullptr;
-		I32 refCount = 0;
 		U32 flags = 0;
 
 		EntityTable* storageTable = nullptr;
@@ -180,13 +178,13 @@ namespace ECS
 		Hashmap<EntityTable*> tableMap;
 
 		// Component
-		Hashmap<IDRecord*> idRecordMap;
-		Util::SparseArray<IDRecord> idRecordPool;
+		Hashmap<ComponentRecord*> compRecordMap;
+		Util::SparseArray<ComponentRecord> compRecordPool;
 		Util::SparseArray<ComponentTypeInfo> compTypePool;
 
 		WorldImpl()
 		{
-			idRecordMap.reserve(HI_COMPONENT_ID);
+			compRecordMap.reserve(HI_COMPONENT_ID);
 			entityPool.SetSourceID(&lastID);
 			if (!root.InitTable(this))
 				assert(0);
@@ -274,11 +272,11 @@ namespace ECS
 			if (compID != INVALID_ENTITY && table->storageTable == nullptr)
 				assert(0);
 
-			IDRecord* idRecord = FindIDRecord(compID);
-			if (idRecord == nullptr)
+			ComponentRecord* compRecord = FindCompRecord(compID);
+			if (compRecord == nullptr)
 				return nullptr;
 
-			EntityTableRecord* tableRecord = GetTableRecrodFromCache(&idRecord->cache, *table->storageTable);
+			EntityTableRecord* tableRecord = GetTableRecrodFromCache(&compRecord->cache, *table->storageTable);
 			if (tableRecord == nullptr)
 				assert(0);
 
@@ -447,15 +445,15 @@ namespace ECS
 			return true;
 		}
 		
-		IDRecord* EnsureIDRecord(EntityID id)
+		ComponentRecord* EnsureCompRecord(EntityID id)
 		{
-			auto it = idRecordMap.find(id);
-			if (it != idRecordMap.end())
+			auto it = compRecordMap.find(id);
+			if (it != compRecordMap.end())
 				return it->second;
 
-			IDRecord* ret = idRecordPool.Requset();
-			ret->recordID = idRecordPool.GetLastID();
-			idRecordMap[id] = ret;
+			ComponentRecord* ret = compRecordPool.Requset();
+			ret->recordID = compRecordPool.GetLastID();
+			compRecordMap[id] = ret;
 			return ret;
 		}
 
@@ -487,10 +485,10 @@ namespace ECS
 			return true;
 		}
 
-		IDRecord* FindIDRecord(EntityID id)
+		ComponentRecord* FindCompRecord(EntityID id)
 		{
-			auto it = idRecordMap.find(id);
-			if (it == idRecordMap.end())
+			auto it = compRecordMap.find(id);
+			if (it == compRecordMap.end())
 				return nullptr;
 			return it->second;
 		}
@@ -897,11 +895,11 @@ namespace ECS
 
 		EntityTableRecord* GetTableRecord(EntityTable* table, EntityID compID)
 		{
-			IDRecord* idRecord = FindIDRecord(compID);
-			if (idRecord == nullptr)
+			ComponentRecord* compRecord = FindCompRecord(compID);
+			if (compRecord == nullptr)
 				return nullptr;
 
-			return GetTableRecrodFromCache(&idRecord->cache, *table);
+			return GetTableRecrodFromCache(&compRecord->cache, *table);
 		}
 
 		EntityTableRecord* GetTableRecrodFromCache(EntityTableCache* cache, const EntityTable& table)
@@ -950,9 +948,9 @@ namespace ECS
 
 		void TableRegisterAddRef(EntityTable* table, EntityID id)
 		{
-			IDRecord* idRecord = EnsureIDRecord(id);
-			assert(idRecord != nullptr);
-			idRecord->addRefs[id] = table;
+			ComponentRecord* compRecord = EnsureCompRecord(id);
+			assert(compRecord != nullptr);
+			compRecord->addRefs[id] = table;
 		}
 
 		void TableRegisterRemoveRef(EntityTable* table, EntityID id)
@@ -1293,8 +1291,8 @@ namespace ECS
 
 	void EntityTable::DeleteEntityFromTable(U32 index, bool destruct)
 	{
-		U32 count = (U32)entities.size();
-		assert(count > 0);
+		U32 count = (U32)entities.size() - 1;
+		assert(count >= 0);
 
 		// Remove target entity
 		EntityID entityToMove = entities[count];
@@ -1312,7 +1310,7 @@ namespace ECS
 			entityInfoToMove->row = index;
 
 		// Pending empty table
-		//if (count == 0)
+		// if (count == 0)
 		//	SetTableEmpty(table);
 
 		if (index == count)
@@ -1422,16 +1420,16 @@ namespace ECS
 	bool RegisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column)
 	{
 		// Create new table record (from compID record cache)
-		IDRecord* idRecord = world->EnsureIDRecord(id);
-		assert(idRecord != nullptr);
-		EntityTableRecord* tableRecord = world->GetTableRecrodFromCache(&idRecord->cache, *table);
+		ComponentRecord* compRecord = world->EnsureCompRecord(id);
+		assert(compRecord != nullptr);
+		EntityTableRecord* tableRecord = world->GetTableRecrodFromCache(&compRecord->cache, *table);
 		if (tableRecord != nullptr)
 		{
 			tableRecord->count++;
 		}
 		else
 		{
-			tableRecord = world->InsertTableCache(&idRecord->cache, *table);
+			tableRecord = world->InsertTableCache(&compRecord->cache, *table);
 			tableRecord->table = table;
 			tableRecord->column = column;	// Index for component from entity type
 			tableRecord->count = 1;
