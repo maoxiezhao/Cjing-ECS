@@ -433,6 +433,23 @@ namespace Util
 			return GetChunkOffset(chunk, offset);
 		}
 
+		void Remove(U64 index)
+		{
+			size_t offset = GetOffsetFromIndex(index);
+			void* ptr = RemoveAndGet(index);
+			if (ptr != nullptr)
+			{
+				if (!__has_trivial_destructor(T))
+				{
+					static_cast<T*>(ptr)->~T();
+				}
+				else
+				{
+					memset(ptr, 0, sizeof(T));
+				}
+			}
+		}
+
 		bool CheckExsist(U64 index)
 		{
 			return Get(index) != nullptr;
@@ -512,18 +529,56 @@ namespace Util
 			AssignIndex(chunkB, indexB, denseA);
 		}
 
-		__forceinline U64 IncID()
+		void* RemoveAndGet(U64 index)
+		{
+			U64 gen = StripGeneration(&index);
+			Chunk* chunk = GetOrCreateChunk(GetChunkIndexFromIndex(index));
+			size_t offset = GetOffsetFromIndex(index);
+			size_t dense = chunk->sparse[offset];
+			if (dense == 0)
+				return nullptr;
+
+			U64 curGen = denseArray[dense] & GENERATION_MASK;
+			if (curGen != gen)
+				return nullptr;
+
+			// Inc generation
+			denseArray[dense] = index | IncGeneration(curGen);
+
+			// Decrease count
+			if (dense == (count - 1))
+			{
+				// Dense point to last used element
+				count--;
+			}
+			else if (dense < count)
+			{
+				// Move current elment to unused element
+				SwapDense(chunk, dense, count - 1);
+				count--;
+			}
+			// TODO
+			chunk->flag[offset] = 0;
+			return chunk->data + offset;
+		}
+
+		U64 IncID()
 		{
 			assert(maxID != nullptr);
 			return ++maxID[0];
 		}
 
-		__forceinline size_t GetChunkIndexFromIndex(U64 index) const
+		U64 IncGeneration(U64 gen)
+		{
+			return ((((gen & GENERATION_MASK) >> 32) + 1) & 0xffff) << 32;
+		}
+
+		size_t GetChunkIndexFromIndex(U64 index) const
 		{
 			return (size_t)index >> 12;	// ~0xfff 4096
 		}
 
-		__forceinline size_t GetOffsetFromIndex(U64 index) const
+		size_t GetOffsetFromIndex(U64 index) const
 		{
 			return (size_t)index & 0xfff;  // 4096
 		}

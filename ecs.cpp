@@ -6,6 +6,13 @@ namespace ECS
 	struct EntityTable;
 	struct EntityInfo;
 
+// EntityID
+// FFFFffff   | FFFFffff
+// Generation |  ID
+#define ECS_ENTITY_MASK               (0xFFFFffffull)
+#define ECS_GENERATION_MASK           (0xFFFFull << 32)
+#define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
+
 	namespace
 	{
 		const U32 FirstUserComponentID = 32;
@@ -41,7 +48,8 @@ namespace ECS
 	}
 
 	static bool RegisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column);
-
+	static bool UnregisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column);
+	
 	using EntityIDAction = bool(*)(WorldImpl*, EntityTable*, EntityID, I32);
 	bool ForEachEntityID(WorldImpl* world, EntityTable* table, EntityIDAction action);
 
@@ -118,8 +126,15 @@ namespace ECS
 		EntityInfo* entityInfo = nullptr;
 	};
 
+	enum class EntityTableEventType
+	{
+		Invalid,
+		ComponentTypeInfo
+	};
+
 	struct EntityTableEvent
 	{
+		EntityTableEventType type = EntityTableEventType::Invalid;
 		EntityID compID = INVALID_ENTITY;
 	};
 
@@ -137,6 +152,7 @@ namespace ECS
 		EntityGraphNode node;
 		bool isInitialized = false;
 		U32 flags = 0;
+		I32 refCount = 0;
 
 		EntityTable* storageTable = nullptr;
 		EntityType storageType;
@@ -149,6 +165,10 @@ namespace ECS
 		std::vector<ComponentTypeInfo*> compTypeInfos;   // CompTypeInfo1, CompTypeInfo2, CompTypeInfo3
 	
 		bool InitTable(WorldImpl* world_);
+		void Claim();
+		void Release();
+		void Free();
+		void FinitData(bool updateEntity, bool deleted);
 		EntityGraphEdge* FindOrCreateEdge(EntityGraphEdges& egdes, EntityID compID);
 		void DeleteEntityFromTable(U32 index, bool destruct);
 		void TableRemoveColumnLast();
@@ -175,7 +195,7 @@ namespace ECS
 		EntityTable root;
 		Util::SparseArray<EntityTable> tables;
 		Util::SparseArray<EntityTable*> pendingTables;
-		Hashmap<EntityTable*> tableMap;
+		Hashmap<EntityTable*> tableTypeHashMap;
 
 		// Component
 		Hashmap<ComponentRecord*> compRecordMap;
@@ -189,7 +209,7 @@ namespace ECS
 			if (!root.InitTable(this))
 				assert(0);
 
-			// Skip index '0'
+			// Skip id 0
 			U64 id = tables.NewIndex();
 			assert(id == 0);
 
@@ -199,8 +219,18 @@ namespace ECS
 		}
 
 		~WorldImpl()
-		{
-
+		{	
+			// Skip id 0
+			for (size_t i = 1; i < tables.Count(); i++)
+			{
+				EntityTable* table = tables.Get(i);
+				if (table != nullptr)
+					table->Release();
+			}
+			tables.Clear();
+			pendingTables.Clear();
+			root.Release();
+			entityPool.Clear();
 		}
 
 		const EntityBuilder& CreateEntity(const char* name) override
@@ -298,7 +328,7 @@ namespace ECS
 			return compTypePool.Get(compID);
 		}
 
-		void SetComponentTypeAction(EntityID compID, const Reflect::ReflectInfo& info) override
+		void SetComponentAction(EntityID compID, const Reflect::ReflectInfo& info) override
 		{
 			InfoComponent* infoComponent = GetComponentInfo(compID);
 			if (infoComponent == nullptr)
@@ -327,11 +357,10 @@ namespace ECS
 			}
 
 			EntityTableEvent ent = {};
+			ent.type = EntityTableEventType::ComponentTypeInfo;
 			ent.compID = compID;
 			NotifyTables(0, ent);
 		}
-
-	protected:
 
 		EntityID InitNewComponent(const ComponentCreateDesc& desc) override
 		{
@@ -566,13 +595,13 @@ namespace ECS
 			// Set component type action
 			Reflect::ReflectInfo info = {};
 			info.ctor = DefaultCtor;
-			SetComponentTypeAction(InfoComponent::GetComponentID(), info);
+			SetComponentAction(InfoComponent::GetComponentID(), info);
 
 			info.ctor = Reflect::Ctor<NameComponent>();
 			info.dtor = Reflect::Dtor<NameComponent>();
 			info.copy = Reflect::Copy<NameComponent>();
 			info.move = Reflect::Move<NameComponent>();
-			SetComponentTypeAction(NameComponent::GetComponentID(), info);
+			SetComponentAction(NameComponent::GetComponentID(), info);
 
 			lastComponentID = FirstUserComponentID;
 			lastID = FirstUserEntityID;
@@ -718,14 +747,14 @@ namespace ECS
 				return nullptr;
 			}
 
-			tableMap.insert(std::make_pair(EntityTypeHash(entityType), ret));
+			tableTypeHashMap.insert(std::make_pair(EntityTypeHash(entityType), ret));
 			return ret;
 		}
 
 		EntityTable* FindOrCreateTableWithIDs(const std::vector<EntityID>& compIDs)
 		{
-			auto it = tableMap.find(EntityTypeHash(compIDs));
-			if (it != tableMap.end())
+			auto it = tableTypeHashMap.find(EntityTypeHash(compIDs));
+			if (it != tableTypeHashMap.end())
 				return it->second;
 
 			return CreateNewTable(compIDs);
@@ -746,8 +775,8 @@ namespace ECS
 			if (entityType.empty())
 				return &root;
 
-			auto it = tableMap.find(EntityTypeHash(entityType));
-			if (it != tableMap.end())
+			auto it = tableTypeHashMap.find(EntityTypeHash(entityType));
+			if (it != tableTypeHashMap.end())
 				return it->second;
 
 			auto ret = CreateNewTable(entityType);
@@ -846,7 +875,7 @@ namespace ECS
 			else
 			{
 				EntityTableDiff& diff = t1->node.diffs.emplace_back();
-				edge->diffIndex = t1->node.diffs.size();
+				edge->diffIndex = (I32)t1->node.diffs.size();
 				if (addedCount > 0)
 					diff.added.reserve(addedCount);
 				if (removedCount > 0)
@@ -1105,10 +1134,12 @@ namespace ECS
 				CompDestruct(srcTable, srcEntity, srcTable->storageColumns[srcColumnIndex].size, srcColumnIndex, srcRow);
 		}
 
+		////////////////////////////////////////////////////////////////////////////////
+		//// TableEvent
+		////////////////////////////////////////////////////////////////////////////////
 
-		void NotifyTableComponentTypeInfo(EntityTable* table, const EntityTableEvent& ent)
+		void NotifyTableComponentTypeInfo(EntityTable* table, EntityID compID)
 		{
-			EntityID compID = ent.compID;
 			if (compID != INVALID_ENTITY && !CheckEntityTypeHasComponent(table->storageType, compID))
 				return;
 
@@ -1125,6 +1156,18 @@ namespace ECS
 			}
 		}
 
+		void NotifyTable(EntityTable* table, const EntityTableEvent& ent)
+		{
+			switch (ent.type)
+			{
+			case EntityTableEventType::ComponentTypeInfo:
+				NotifyTableComponentTypeInfo(table, ent.compID);
+				break;
+			default:
+				break;
+			}
+		}
+
 		void NotifyTables(U64 tableID, const EntityTableEvent& ent)
 		{
 			if (tableID == 0)
@@ -1132,14 +1175,14 @@ namespace ECS
 				for (int i = 0; i < tables.Count(); i++)
 				{
 					EntityTable* table = tables.Get(i);
-					NotifyTableComponentTypeInfo(table, ent);
+					NotifyTable(table, ent);
 				}
 			}
 			else
 			{
 				EntityTable* table = tables.Get(tableID);
 				if (table != nullptr)
-					NotifyTableComponentTypeInfo(table, ent);
+					NotifyTable(table, ent);
 			}
 		}
 	};
@@ -1152,6 +1195,7 @@ namespace ECS
 	{
 		assert(world_ != nullptr);
 		world = world_;
+		refCount = 1;
 
 		// Ensure all ids used exist */
 		for (auto& id : type)
@@ -1262,8 +1306,78 @@ namespace ECS
 		}
 
 		EntityTableEvent ent = {};
+		ent.type = EntityTableEventType::ComponentTypeInfo;
 		world->NotifyTables(0, ent);
 		return true;
+	}
+
+	void EntityTable::Claim()
+	{
+		assert(refCount > 0);
+		refCount++;
+	}
+
+	void EntityTable::Release()
+	{
+		assert(refCount > 0);
+		if (--refCount == 0)
+			Free();
+	}
+
+	void EntityTable::Free()
+	{
+		bool isRoot = this == &world->root;
+		assert(isRoot || this->tableID != 0);
+		assert(refCount == 0);
+
+		// Finit data
+		FinitData(true, true);
+
+		if (!isRoot)
+		{
+			//  Unregister table
+			ForEachEntityID(world, this, UnregisterTable);
+
+			// Remove from hashMap
+			world->tableTypeHashMap.erase(EntityTypeHash(type));
+		}
+
+		world->tables.Remove(tableID);
+	}
+
+	void EntityTable::FinitData(bool updateEntity, bool deleted)
+	{
+		if (!entities.empty())
+		{
+			for (size_t row = 0; row < entities.size(); row++)
+			{
+				for (size_t col = 0; col < storageColumns.size(); col++)
+				{
+					auto columnData = storageColumns[col];
+					void* mem = columnData.data.Get(columnData.size, columnData.alignment, row);
+					compTypeInfos[col]->reflectInfo.dtor(world, &entities[row], columnData.size, 1, mem);
+				}
+
+				if (updateEntity)
+				{
+					EntityID entity = entities[row];
+					assert(entity != INVALID_ENTITY);
+					if (deleted)
+					{
+						world->entityPool.Remove(entity);
+					}
+					else
+					{
+						entityInfos[row]->table = nullptr;
+						entityInfos[row]->row = 0;
+					}
+				}
+			}
+		}
+
+		storageColumns.clear();
+		entities.clear();
+		entityInfos.clear();
 	}
 
 	EntityGraphEdge* EntityTable::FindOrCreateEdge(EntityGraphEdges& egdes, EntityID compID)
@@ -1384,7 +1498,7 @@ namespace ECS
 
 	void EntityTable::TableGrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct)
 	{
-		U32 oldCount = columnData.data.GetCount();
+		U32 oldCount = (U32)columnData.data.GetCount();
 		U32 oldCapacity = (U32)columnData.data.GetCapacity();
 		if (oldCapacity != newCapacity)
 			columnData.data.Reserve(columnData.size, columnData.alignment, newCapacity);
@@ -1435,6 +1549,11 @@ namespace ECS
 			tableRecord->count = 1;
 		}
 		return true;
+	}
+
+	bool UnregisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column)
+	{
+		return 0;
 	}
 
 	bool ForEachEntityID(WorldImpl* world, EntityTable* table, EntityIDAction action)

@@ -3,15 +3,13 @@
 #include "common.h"
 #include "ecs_util.h"
 
+// TODO
+// * support actions, implement an observer system
+// * work pipeline
+// * work with a jobSystem
+
 namespace ECS
 {
-	// EntityID
-	// FFFFffff   | FFFFffff
-	// Generation |  ID
-#define ECS_ENTITY_MASK               (0xFFFFffffull)
-#define ECS_GENERATION_MASK           (0xFFFFull << 32)
-#define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
-
 	class World;
 
 	using EntityID = U64;
@@ -137,7 +135,11 @@ public:                                                   \
 	class World
 	{
 	public:
+		World() = default;
 		virtual ~World() {}
+
+		World(const World& obj) = delete;
+		void operator=(const World& obj) = delete;
 
 		static std::unique_ptr<World> Create();
 
@@ -185,10 +187,7 @@ public:                                                   \
 		virtual bool HasComponentTypeAction(EntityID compID)const = 0;
 		virtual ComponentTypeInfo* GetComponentTypInfo(EntityID compID) = 0;
 		virtual const ComponentTypeInfo* GetComponentTypInfo(EntityID compID)const = 0;
-		virtual void SetComponentTypeAction(EntityID compID, const Reflect::ReflectInfo& info) = 0;
-	
-	protected:
-		// TODO
+		virtual void SetComponentAction(EntityID compID, const Reflect::ReflectInfo& info) = 0;
 		virtual EntityID InitNewComponent(const ComponentCreateDesc& desc) = 0;
 		virtual void* GetOrCreateComponent(EntityID entity, EntityID compID) = 0;
 	};
@@ -429,7 +428,7 @@ public:                                                   \
 				info.move = Move<T>();
 				info.copyCtor = CopyCtor<T>();
 				info.moveCtor = MoveCtor<T>();
-				world.SetComponentTypeAction(compID, info);
+				world.SetComponentAction(compID, info);
 			}
 		}
 
