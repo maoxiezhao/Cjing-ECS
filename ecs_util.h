@@ -632,8 +632,8 @@ namespace Util
 		}
 
 	private:
-		std::vector<U64> denseArray;
-		std::vector<Chunk> chunks;
+		std::vector<U64> denseArray; // dense => index
+		std::vector<Chunk> chunks;   // index => chunkIndex | offset, chunk.sparse[offset] = dense
 		size_t count = 0;
 		U64* maxID = nullptr;
 		U64 localMaxID = 0;

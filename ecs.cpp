@@ -16,7 +16,7 @@ namespace ECS
 	namespace
 	{
 		const U32 FirstUserComponentID = 32;
-		const U32 FirstUserEntityID = HI_COMPONENT_ID + 128;;
+		const U32 FirstUserEntityID = HI_COMPONENT_ID + 128;
 
 		U64 EntityTypeHash(const EntityType& entityType)
 		{
@@ -64,24 +64,22 @@ namespace ECS
 		I64 alignment = 0;           // Column element alignment
 	};
 
-	struct EntityGraphEdge
-	{
-		EntityTable* next = nullptr;
-		I32 diffIndex = -1;			// mapping to EntityGraphNode diffBuffer
-	};
-
-	struct EntityGraphEdges
-	{
-		EntityGraphEdge loEdges[HI_COMPONENT_ID];
-		Hashmap<EntityGraphEdge> hiEdges;
-	};
-
 	struct EntityTableDiff
 	{
 		EntityIDs added;			// Components added between tables
 		EntityIDs removed;			// Components removed between tables
 	};
 
+	struct EntityGraphEdge
+	{
+		EntityTable* next = nullptr;
+		I32 diffIndex = -1;			// mapping to EntityGraphNode diffBuffer
+	};
+	struct EntityGraphEdges
+	{
+		EntityGraphEdge loEdges[HI_COMPONENT_ID];
+		Hashmap<EntityGraphEdge> hiEdges;
+	};
 	struct EntityGraphNode
 	{
 		EntityGraphEdges add;
@@ -89,19 +87,34 @@ namespace ECS
 		std::vector<EntityTableDiff> diffs;
 	};
 
-	struct EntityTableRecord
+	// Dual link list to manage TableRecords
+	struct CompTableCacheListNode
 	{
-		bool empty = false;
 		EntityTable* table = nullptr;	// -> Owned table
-		I32 column = 0;
+		bool empty = false;
+		CompTableCacheListNode* prev = nullptr;
+		CompTableCacheListNode* next = nullptr;
+	};
+	struct CompTableCacheList
+	{
+		CompTableCacheListNode* first = nullptr;
+		CompTableCacheListNode* last = nullptr;
+		U32 count = 0;
+	};
+
+	struct CompTableRecord
+	{
+		CompTableCacheListNode header;
+		EntityTable* table = nullptr;	// -> Owned table
+		I32 column = 0;					// The column of comp in target table
 		I32 count = 0;
 	};
 
 	struct EntityTableCache
 	{
-		Hashmap<I32> tableIDMap;
-		std::vector<EntityTableRecord> records;
-		std::vector<EntityTableRecord> emptyRecords;
+		Hashmap<CompTableCacheListNode*> tableRecordMap; // <TableID, CompTableRecord>
+		CompTableCacheList records;
+		CompTableCacheList emptyRecords;
 	};
 
 	// EntityID <-> EntityInfo
@@ -113,7 +126,7 @@ namespace ECS
 
 	struct ComponentRecord
 	{
-		EntityTableCache cache;
+		EntityTableCache cache;	// Record all columns and tables which used this comp  
 		Hashmap<EntityTable*> addRefs;
 		Hashmap<EntityTable*> removeRefs;
 		U64 recordID;
@@ -149,7 +162,7 @@ namespace ECS
 		WorldImpl* world = nullptr;
 		U64 tableID = 0;
 		EntityType type;
-		EntityGraphNode node;
+		EntityGraphNode graphNode;
 		bool isInitialized = false;
 		U32 flags = 0;
 		I32 refCount = 0;
@@ -168,8 +181,10 @@ namespace ECS
 		void Claim();
 		void Release();
 		void Free();
-		void FinitData(bool updateEntity, bool deleted);
+		void FiniData(bool updateEntity, bool deleted);
 		EntityGraphEdge* FindOrCreateEdge(EntityGraphEdges& egdes, EntityID compID);
+		EntityGraphEdge* FindEdge(EntityGraphEdges& egdes, EntityID compID);
+		void ClearEdge(EntityID compID, bool isAdded);
 		void DeleteEntityFromTable(U32 index, bool destruct);
 		void TableRemoveColumnLast();
 		void TableRemoveColumn(U32 index);
@@ -221,7 +236,8 @@ namespace ECS
 		~WorldImpl()
 		{	
 			// Skip id 0
-			for (size_t i = 1; i < tables.Count(); i++)
+			size_t tabelCount = tables.Count();
+			for (size_t i = 1; i < tabelCount; i++)
 			{
 				EntityTable* table = tables.Get(i);
 				if (table != nullptr)
@@ -306,7 +322,7 @@ namespace ECS
 			if (compRecord == nullptr)
 				return nullptr;
 
-			EntityTableRecord* tableRecord = GetTableRecrodFromCache(&compRecord->cache, *table->storageTable);
+			CompTableRecord* tableRecord = GetTableRecordFromCache(&compRecord->cache, *table->storageTable);
 			if (tableRecord == nullptr)
 				assert(0);
 
@@ -476,14 +492,26 @@ namespace ECS
 		
 		ComponentRecord* EnsureCompRecord(EntityID id)
 		{
-			auto it = compRecordMap.find(id);
+			auto it = compRecordMap.find(StripGeneration(id));
 			if (it != compRecordMap.end())
 				return it->second;
 
 			ComponentRecord* ret = compRecordPool.Requset();
 			ret->recordID = compRecordPool.GetLastID();
-			compRecordMap[id] = ret;
+			compRecordMap[StripGeneration(id)] = ret;
 			return ret;
+		}
+
+		void RemoveCompRecord(EntityID id, ComponentRecord* compRecord)
+		{
+			ComponentRecord record = *compRecord;
+			compRecordPool.Remove(compRecord->recordID);
+			compRecordMap.erase(StripGeneration(id));
+
+			for (auto kvp : record.addRefs)
+				kvp.second->ClearEdge(id, true);
+			for (auto kvp : record.removeRefs)
+				kvp.second->ClearEdge(id, false);
 		}
 
 		bool CheckEntityTypeHasComponent(EntityType& entityType, EntityID compID)
@@ -516,7 +544,7 @@ namespace ECS
 
 		ComponentRecord* FindCompRecord(EntityID id)
 		{
-			auto it = compRecordMap.find(id);
+			auto it = compRecordMap.find(StripGeneration(id));
 			if (it == compRecordMap.end())
 				return nullptr;
 			return it->second;
@@ -633,7 +661,7 @@ namespace ECS
 		{
 			assert(compID != 0);
 			assert(row >= 0);
-			EntityTableRecord* tableRecord = GetTableRecord(&table, compID);
+			CompTableRecord* tableRecord = GetTableRecord(&table, compID);
 			if (tableRecord == nullptr)
 				return nullptr;
 
@@ -806,7 +834,7 @@ namespace ECS
 			assert(compID != 0);
 
 			EntityTable* node = table != nullptr ? table : &root;
-			EntityGraphEdge* edge = node->FindOrCreateEdge(node->node.add, compID);
+			EntityGraphEdge* edge = node->FindOrCreateEdge(node->graphNode.add, compID);
 			assert(edge != nullptr);
 			if (edge->next == nullptr)
 			{
@@ -847,7 +875,6 @@ namespace ECS
 			{
 				EntityID srcComponentID = t1->storageType[srcColumnIndex];
 				EntityID dstComponentID = t2->storageType[dstColumnIndex];
-
 				if (srcComponentID < dstComponentID)
 				{
 					removedCount++;
@@ -859,8 +886,8 @@ namespace ECS
 					trivialEdge = false;
 				}
 
-				srcComponentID += srcComponentID <= dstComponentID;
-				dstComponentID += dstComponentID <= srcComponentID;
+				srcColumnIndex += srcComponentID <= dstComponentID;
+				dstColumnIndex += dstComponentID <= srcComponentID;
 			}
 
 			addedCount += dstNumColumns - dstColumnIndex;
@@ -874,8 +901,8 @@ namespace ECS
 			}
 			else
 			{
-				EntityTableDiff& diff = t1->node.diffs.emplace_back();
-				edge->diffIndex = (I32)t1->node.diffs.size();
+				EntityTableDiff& diff = t1->graphNode.diffs.emplace_back();
+				edge->diffIndex = (I32)t1->graphNode.diffs.size();
 				if (addedCount > 0)
 					diff.added.reserve(addedCount);
 				if (removedCount > 0)
@@ -890,8 +917,8 @@ namespace ECS
 					else if (srcComponentID > dstComponentID)
 						diff.added.push_back(dstComponentID);
 
-					srcComponentID += srcComponentID <= dstComponentID;
-					dstComponentID += dstComponentID <= srcComponentID;
+					srcColumnIndex += srcComponentID <= dstComponentID;
+					dstColumnIndex += dstComponentID <= srcComponentID;
 				}
 
 				for (; srcColumnIndex < srcNumColumns; srcColumnIndex++)
@@ -910,7 +937,7 @@ namespace ECS
 			assert(edge != nullptr);
 			if (edge->diffIndex > 0)
 			{
-				diff = table->node.diffs[edge->diffIndex - 1];
+				diff = table->graphNode.diffs[edge->diffIndex - 1];
 			}
 			else
 			{
@@ -922,57 +949,13 @@ namespace ECS
 			}
 		}
 
-		EntityTableRecord* GetTableRecord(EntityTable* table, EntityID compID)
+		CompTableRecord* GetTableRecord(EntityTable* table, EntityID compID)
 		{
 			ComponentRecord* compRecord = FindCompRecord(compID);
 			if (compRecord == nullptr)
 				return nullptr;
 
-			return GetTableRecrodFromCache(&compRecord->cache, *table);
-		}
-
-		EntityTableRecord* GetTableRecrodFromCache(EntityTableCache* cache, const EntityTable& table)
-		{
-			auto it = cache->tableIDMap.find(table.tableID);
-			if (it == cache->tableIDMap.end())
-				return nullptr;
-
-			EntityTableRecord* ret;
-			I32 index = it->second;
-			if (index >= 0)
-			{
-				ret = &cache->records[index];
-			}
-			else
-			{
-				assert((-1 * index - 1) >= 0);
-				U32 realIndex = (U32)(-1 * index - 1); // real index = -index - 1
-				ret = &cache->emptyRecords[realIndex];
-			}
-			return ret;
-		}
-
-		EntityTableRecord* InsertTableCache(EntityTableCache* cache, const EntityTable& table)
-		{
-			assert(cache != nullptr);
-			bool empty = table.entities.empty();
-			I32 recordIndex;
-			EntityTableRecord* ret = nullptr;
-			if (empty)
-			{
-				ret = &cache->emptyRecords.emplace_back();
-				recordIndex = -(I32)cache->emptyRecords.size();	// [-1, -INF] -index for emptyRecord
-			}
-			else
-			{
-				ret = &cache->records.emplace_back();
-				recordIndex = (I32)cache->emptyRecords.size();  // [0, INF] +index for record
-			}
-			cache->tableIDMap[table.tableID] = recordIndex;
-
-			ret->table = (EntityTable*)(&table);
-			ret->empty = empty;
-			return ret;
+			return GetTableRecordFromCache(&compRecord->cache, *table);
 		}
 
 		void TableRegisterAddRef(EntityTable* table, EntityID id)
@@ -1132,6 +1115,79 @@ namespace ECS
 			// Destruct remainning columns
 			for (; srcColumnIndex < srcNumColumns; srcColumnIndex++)
 				CompDestruct(srcTable, srcEntity, srcTable->storageColumns[srcColumnIndex].size, srcColumnIndex, srcRow);
+		}
+
+		////////////////////////////////////////////////////////////////////////////////
+		//// TableCache
+		////////////////////////////////////////////////////////////////////////////////
+		CompTableRecord* GetTableRecordFromCache(EntityTableCache* cache, const EntityTable& table)
+		{
+			auto it = cache->tableRecordMap.find(table.tableID);
+			if (it == cache->tableRecordMap.end())
+				return nullptr;
+			return reinterpret_cast<CompTableRecord*>(it->second);
+		}
+
+		CompTableRecord* InsertTableIntoCache(EntityTableCache* cache, const EntityTable* table)
+		{
+			assert(cache != nullptr);
+			assert(table != nullptr);
+			bool empty = table->entities.empty();
+			CompTableCacheListNode* node = static_cast<CompTableCacheListNode*>(malloc(sizeof(CompTableRecord)));
+			assert(node != nullptr);
+			node->table = (EntityTable*)(table);
+			node->empty = empty;
+
+			cache->tableRecordMap[table->tableID] = node;
+			InsertTableCacheNode(empty ? cache->emptyRecords : cache->records, node);
+			return reinterpret_cast<CompTableRecord*>(node);
+		}
+
+		bool RemoveTableFromCache(EntityTableCache* cache, EntityTable* table)
+		{
+			auto it = cache->tableRecordMap.find(table->tableID);
+			if (it == cache->tableRecordMap.end())
+				return false;
+
+			CompTableCacheListNode* node = it->second;
+			if (node == nullptr)
+				return false;
+
+			RemoveTableCacheNode(node->empty ? cache->emptyRecords : cache->records, node);
+			free(node);
+
+			cache->tableRecordMap.erase(table->tableID);
+			return true;
+		}
+
+		void InsertTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node)
+		{
+			CompTableCacheListNode* last = list.last;
+			list.last = node;
+			list.count++;
+			if (list.count == 1)
+				list.first = node;
+
+			node->next = nullptr;
+			node->prev = last;
+
+			if (last != nullptr)
+				last->next = node;
+		}
+
+		void RemoveTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node)
+		{
+			if (node->prev != nullptr)
+				node->prev->next = node->next;
+			if (node->next != nullptr)
+				node->next->prev = node->prev;
+
+			list.count--;
+
+			if (node == list.first)
+				list.first = node->next;
+			if (node == list.last)
+				list.last = node->prev;
 		}
 
 		////////////////////////////////////////////////////////////////////////////////
@@ -1331,7 +1387,7 @@ namespace ECS
 		assert(refCount == 0);
 
 		// Finit data
-		FinitData(true, true);
+		FiniData(true, true);
 
 		if (!isRoot)
 		{
@@ -1345,7 +1401,7 @@ namespace ECS
 		world->tables.Remove(tableID);
 	}
 
-	void EntityTable::FinitData(bool updateEntity, bool deleted)
+	void EntityTable::FiniData(bool updateEntity, bool deleted)
 	{
 		if (!entities.empty())
 		{
@@ -1353,9 +1409,10 @@ namespace ECS
 			{
 				for (size_t col = 0; col < storageColumns.size(); col++)
 				{
-					auto columnData = storageColumns[col];
+					ComponentColumnData& columnData = storageColumns[col];
 					void* mem = columnData.data.Get(columnData.size, columnData.alignment, row);
-					compTypeInfos[col]->reflectInfo.dtor(world, &entities[row], columnData.size, 1, mem);
+					if (compTypeInfos[col]->reflectInfo.dtor != nullptr)
+						compTypeInfos[col]->reflectInfo.dtor(world, &entities[row], columnData.size, 1, mem);
 				}
 
 				if (updateEntity)
@@ -1401,6 +1458,37 @@ namespace ECS
 			}
 		}
 		return edge;
+	}
+
+	EntityGraphEdge* EntityTable::FindEdge(EntityGraphEdges& egdes, EntityID compID)
+	{
+		EntityGraphEdge* edge = nullptr;
+		if (compID < HI_COMPONENT_ID)
+		{
+			edge = &egdes.loEdges[compID];
+		}
+		else
+		{
+			auto it = egdes.hiEdges.find(compID);
+			if (it != egdes.hiEdges.end())
+				edge = &it->second;
+		}
+		return edge;
+	}
+
+	void EntityTable::ClearEdge(EntityID compID, bool isAdded)
+	{
+		EntityGraphEdge* edge = nullptr;
+		if (isAdded)
+			edge = FindEdge(graphNode.add, compID);
+		else
+			edge = FindEdge(graphNode.remove, compID);
+		
+		if (edge != nullptr)
+		{
+			edge->next = nullptr;
+			edge->diffIndex = 0;
+		}
 	}
 
 	void EntityTable::DeleteEntityFromTable(U32 index, bool destruct)
@@ -1536,14 +1624,16 @@ namespace ECS
 		// Create new table record (from compID record cache)
 		ComponentRecord* compRecord = world->EnsureCompRecord(id);
 		assert(compRecord != nullptr);
-		EntityTableRecord* tableRecord = world->GetTableRecrodFromCache(&compRecord->cache, *table);
+
+		// Create table record
+		CompTableRecord* tableRecord = world->GetTableRecordFromCache(&compRecord->cache, *table);
 		if (tableRecord != nullptr)
 		{
 			tableRecord->count++;
 		}
 		else
 		{
-			tableRecord = world->InsertTableCache(&compRecord->cache, *table);
+			tableRecord = world->InsertTableIntoCache(&compRecord->cache, table);
 			tableRecord->table = table;
 			tableRecord->column = column;	// Index for component from entity type
 			tableRecord->count = 1;
@@ -1553,7 +1643,21 @@ namespace ECS
 
 	bool UnregisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column)
 	{
-		return 0;
+		ComponentRecord* compRecord = world->FindCompRecord(id);
+		if (compRecord == nullptr)
+			return false;
+
+		EntityTableCache& cache = compRecord->cache;
+		auto it = compRecord->cache.tableRecordMap.find(table->tableID);
+		if (it == compRecord->cache.tableRecordMap.end())
+			return false;
+
+		if (world->RemoveTableFromCache(&cache, table))
+		{
+			// Remove the component id
+			world->RemoveCompRecord(id, compRecord);
+		}
+		return true;
 	}
 
 	bool ForEachEntityID(WorldImpl* world, EntityTable* table, EntityIDAction action)
