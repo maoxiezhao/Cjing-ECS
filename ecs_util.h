@@ -91,19 +91,25 @@ namespace Util
 	public:
         StorageVector() = default;
 
-        ~StorageVector()
-        {
-            if (data != nullptr)
-                free(data);
-        }
+		~StorageVector()
+		{
+			if (data != nullptr)
+			{
+				free(data);
+				data = nullptr;
+			}
+		}
 
         void Clear()
         {
             count = 0;
             capacity = 0;
-            if (data != nullptr)
-                free(data);
-        }
+			if (data != nullptr)
+			{
+				free(data);
+				data = nullptr;
+			}
+		}
 
         void* PushBack(size_t elemSize, size_t offset)
         {

@@ -131,10 +131,10 @@ public:                                                   \
 		virtual const EntityBuilder& CreateEntity(const char* name) = 0;
 		virtual EntityID CreateEntityID(const char* name) = 0;
 		virtual EntityID FindEntityIDByName(const char* name) = 0;
-		virtual EntityID EntityIDAlive(EntityID id) = 0;
-		virtual void DeleteEntity(EntityID id) = 0;
+		virtual EntityID EntityIDAlive(EntityID entity) = 0;
+		virtual void DeleteEntity(EntityID entity) = 0;
 		virtual void SetEntityName(EntityID entity, const char* name) = 0;
-		virtual void EnsureEntity(EntityID id) = 0;
+		virtual void EnsureEntity(EntityID entity) = 0;
 		virtual void* GetComponent(EntityID entity, EntityID compID) = 0;
 
 		template<typename C>

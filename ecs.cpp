@@ -185,11 +185,11 @@ namespace ECS
 		EntityGraphEdge* FindOrCreateEdge(EntityGraphEdges& egdes, EntityID compID);
 		EntityGraphEdge* FindEdge(EntityGraphEdges& egdes, EntityID compID);
 		void ClearEdge(EntityID compID, bool isAdded);
-		void DeleteEntityFromTable(U32 index, bool destruct);
-		void TableRemoveColumnLast();
-		void TableRemoveColumn(U32 index);
-		void TableGrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
-		U32 TableAppendNewEntity(EntityID entity, EntityInfo* info, bool construct);
+		void DeleteEntity(U32 index, bool destruct);
+		void RemoveColumnLast();
+		void RemoveColumn(U32 index);
+		void GrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
+		U32  AppendNewEntity(EntityID entity, EntityInfo* info, bool construct);
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -276,20 +276,34 @@ namespace ECS
 			return INVALID_ENTITY;
 		}
 
-		EntityID EntityIDAlive(EntityID id) override
+		EntityID EntityIDAlive(EntityID entity) override
 		{
-			if (id == INVALID_ENTITY)
+			if (entity == INVALID_ENTITY)
 				return INVALID_ENTITY;
 
-			if (entityPool.CheckExsist(id))
-				return id;
+			if (entityPool.CheckExsist(entity))
+				return entity;
 
 			return false;
 		}
 			
-		void DeleteEntity(EntityID id) override
+		void DeleteEntity(EntityID entity) override
 		{ 
-			// TODO
+			assert(entity != INVALID_ENTITY);
+			EntityInfo* entityInfo = entityPool.Get(entity);
+			if (entityInfo == nullptr)
+				return;
+			
+			U64 tableID = 0;
+			if (entityInfo->table)
+				tableID = entityInfo->table->tableID;
+
+			if (tableID > 0 && tables.CheckExsist(tableID))
+				entityInfo->table->DeleteEntity(entityInfo->row, true);
+
+			entityInfo->row = 0;
+			entityInfo->table = nullptr;
+			entityPool.Remove(entity);
 		}
 
 		void SetEntityName(EntityID entity, const char* name) override
@@ -601,7 +615,7 @@ namespace ECS
 				EntityInfo* entityInfo = entityPool.Ensure(compID);
 				entityInfo->table = table;
 
-				U32 index = table->TableAppendNewEntity(compID, entityInfo, false);
+				U32 index = table->AppendNewEntity(compID, entityInfo, false);
 				entityInfo->row = index;
 
 				// Component info
@@ -985,7 +999,7 @@ namespace ECS
 					assert(entityInfo != nullptr && entityInfo == entityPool.Get(entity));
 
 					// Add a new entity for dstTable (Just reserve storage)
-					U32 newRow = dstTable->TableAppendNewEntity(entity, entityInfo, false);
+					U32 newRow = dstTable->AppendNewEntity(entity, entityInfo, false);
 					assert(srcTable->entities.size() > info->row);
 					if (!srcTable->type.empty())
 						MoveTableEntities(entity, srcTable, info->row, entity, dstTable, newRow, construct);
@@ -994,7 +1008,7 @@ namespace ECS
 					entityInfo->table = dstTable;
 
 					// Remove old table
-					srcTable->DeleteEntityFromTable(info->row, false);
+					srcTable->DeleteEntity(info->row, false);
 
 					info->row = newRow;
 					info->table = dstTable;
@@ -1010,7 +1024,7 @@ namespace ECS
 				if (entityInfo == nullptr)
 					entityInfo = entityPool.Ensure(entity);
 
-				U32 newRow = dstTable->TableAppendNewEntity(entity, entityInfo, construct);
+				U32 newRow = dstTable->AppendNewEntity(entity, entityInfo, construct);
 				entityInfo->row = newRow;
 				entityInfo->table = dstTable;
 
@@ -1403,9 +1417,11 @@ namespace ECS
 
 	void EntityTable::FiniData(bool updateEntity, bool deleted)
 	{
-		if (!entities.empty())
+		// Dtor all components
+		size_t count = entities.size();
+		if (count > 0)
 		{
-			for (size_t row = 0; row < entities.size(); row++)
+			for (size_t row = 0; row < count; row++)
 			{
 				for (size_t col = 0; col < storageColumns.size(); col++)
 				{
@@ -1432,7 +1448,16 @@ namespace ECS
 			}
 		}
 
+		assert(entityInfos.size() == entities.size());
+
+		for (int i = 0; i < storageColumns.size(); i++)
+		{
+			ComponentColumnData& columnData = storageColumns[i];
+			assert(columnData.data.GetCount() == count);
+			columnData.data.Clear();
+		}
 		storageColumns.clear();
+
 		entities.clear();
 		entityInfos.clear();
 	}
@@ -1491,7 +1516,7 @@ namespace ECS
 		}
 	}
 
-	void EntityTable::DeleteEntityFromTable(U32 index, bool destruct)
+	void EntityTable::DeleteEntity(U32 index, bool destruct)
 	{
 		U32 count = (U32)entities.size() - 1;
 		assert(count >= 0);
@@ -1518,21 +1543,20 @@ namespace ECS
 		if (index == count)
 		{
 			// Destruct the last data of column
-			bool hasDestructor = false;
-			if (destruct && hasDestructor)
+			if (destruct)
 			{
 				for (int i = 0; i < storageType.size(); i++)
 				{
 					ComponentTypeInfo* compTypeInfo = compTypeInfos[i];
 					if (compTypeInfo != nullptr && compTypeInfo->reflectInfo.dtor != nullptr)
 					{
-						auto columnData = storageColumns[i];
+						auto& columnData = storageColumns[i];
 						void* mem = columnData.data.Get(columnData.size, columnData.alignment, count);
 						compTypeInfo->reflectInfo.dtor(world, &entityToDelete, compTypeInfo->size, 1, mem);
 					}
 				}
 			}
-			TableRemoveColumnLast();
+			RemoveColumnLast();
 		}
 		else
 		{
@@ -1544,7 +1568,7 @@ namespace ECS
 					auto& reflectInfo = compTypeInfos[i]->reflectInfo;
 					if (reflectInfo.move != nullptr && reflectInfo.dtor != nullptr)
 					{
-						auto columnData = storageColumns[i];
+						auto& columnData = storageColumns[i];
 						void* srcMem = columnData.data.Get(columnData.size, columnData.alignment, count);
 						void* dstMem = columnData.data.Get(columnData.size, columnData.alignment, index);
 						reflectInfo.move(world, &entityToMove, &entityToDelete, compTypeInfos[i]->size, 1, srcMem, dstMem);
@@ -1552,7 +1576,7 @@ namespace ECS
 					}
 					else
 					{
-						auto columnData = storageColumns[i];
+						auto& columnData = storageColumns[i];
 						void* srcMem = columnData.data.Get(columnData.size, columnData.alignment, count);
 						void* dstMem = columnData.data.Get(columnData.size, columnData.alignment, index);
 						memcpy(dstMem, srcMem, columnData.size);
@@ -1561,12 +1585,12 @@ namespace ECS
 			}
 			else
 			{
-				TableRemoveColumn(index);
+				RemoveColumn(index);
 			}
 		}
 	}
 
-	void EntityTable::TableRemoveColumnLast()
+	void EntityTable::RemoveColumnLast()
 	{
 		for (int i = 0; i < storageType.size(); i++)
 		{
@@ -1575,7 +1599,7 @@ namespace ECS
 		}
 	}
 
-	void EntityTable::TableRemoveColumn(U32 index)
+	void EntityTable::RemoveColumn(U32 index)
 	{
 		for (int i = 0; i < storageType.size(); i++)
 		{
@@ -1584,7 +1608,7 @@ namespace ECS
 		}
 	}
 
-	void EntityTable::TableGrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct)
+	void EntityTable::GrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct)
 	{
 		U32 oldCount = (U32)columnData.data.GetCount();
 		U32 oldCapacity = (U32)columnData.data.GetCapacity();
@@ -1596,7 +1620,7 @@ namespace ECS
 			compTypeInfo->reflectInfo.ctor(world, &entities[oldCount], columnData.size, addCount, mem);
 	}
 
-	U32 EntityTable::TableAppendNewEntity(EntityID entity, EntityInfo* info, bool construct)
+	U32 EntityTable::AppendNewEntity(EntityID entity, EntityInfo* info, bool construct)
 	{
 		U32 index = (U32)entities.size();
 
@@ -1613,7 +1637,7 @@ namespace ECS
 			if (!compTypeInfos.empty())
 				compTypeInfo = compTypeInfos[i];
 
-			TableGrowColumn(entities, columnData, compTypeInfo, 1, newCapacity, construct);
+			GrowColumn(entities, columnData, compTypeInfo, 1, newCapacity, construct);
 		}
 
 		return index;
