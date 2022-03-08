@@ -13,11 +13,16 @@ namespace ECS
 	class World;
 	class EntityBuilder;
 
+	template<typename... Args>
+	class SystemBuilder;
+
 	using EntityID = U64;
-	static const EntityID INVALID_ENTITY = 0;
 	using EntityIDs = std::vector<EntityID>;
 	using EntityType = std::vector<EntityID>;
 	
+	static const EntityID INVALID_ENTITY = 0;
+	static const EntityType EMPTY_ENTITY_TYPE = EntityType();
+
 	template<typename Value>
 	using Hashmap = std::unordered_map<U64, Value>;
 
@@ -68,6 +73,7 @@ public:                                                   \
 	{
 		static EntityID componentID;
 		static EntityID ComponentID(World& world);
+		static EntityID RegisterComponent(World& world, const char* name = nullptr);
 		static bool Registered();
 	};
 	template<typename C>
@@ -94,6 +100,15 @@ public:                                                   \
 		EntityCreateDesc entity = {};
 		size_t alignment = 0;
 		size_t size = 0;
+	};
+
+	typedef void (*InvokerDeleter)(void* ptr);
+
+	struct SystemCreateDesc
+	{
+		EntityCreateDesc entity = {};
+		void* invoker;
+		InvokerDeleter invokerDeleter;
 	};
 
 	//////////////////////////////////////////////
@@ -131,10 +146,12 @@ public:                                                   \
 		virtual const EntityBuilder& CreateEntity(const char* name) = 0;
 		virtual EntityID CreateEntityID(const char* name) = 0;
 		virtual EntityID FindEntityIDByName(const char* name) = 0;
-		virtual EntityID EntityIDAlive(EntityID entity) = 0;
+		virtual EntityID IsEntityAlive(EntityID entity)const = 0;
+		virtual EntityType GetEntityType(EntityID entity)const = 0;
 		virtual void DeleteEntity(EntityID entity) = 0;
 		virtual void SetEntityName(EntityID entity, const char* name) = 0;
 		virtual void EnsureEntity(EntityID entity) = 0;
+
 		virtual void* GetComponent(EntityID entity, EntityID compID) = 0;
 
 		template<typename C>
@@ -152,21 +169,16 @@ public:                                                   \
 		}
 
 		template<typename C>
-		EntityID RegisterComponent(const char* name = nullptr)
+		void AddComponent(EntityID entity)
 		{
-			const char* n = name;
-			if (n == nullptr)
-				n = Util::Typename<C>();
+			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
+			AddComponent(entity, compID);
+		}
 
-			ComponentCreateDesc desc = {};
-			desc.entity.entity = INVALID_ENTITY;
-			desc.entity.name = n;
-			desc.entity.useComponentID = true;
-			desc.size = sizeof(C);
-			desc.alignment = alignof(C);
-			EntityID ret = InitNewComponent(desc);
-			C::componentID = ret;
-			return ret;
+		template<typename C>
+		void RegisterComponent()
+		{
+			ComponentTypeRegister<C>::ComponentID(*this);
 		}
 
 		virtual bool HasComponentTypeAction(EntityID compID)const = 0;
@@ -175,6 +187,13 @@ public:                                                   \
 		virtual void SetComponentAction(EntityID compID, const Reflect::ReflectInfo& info) = 0;
 		virtual EntityID InitNewComponent(const ComponentCreateDesc& desc) = 0;
 		virtual void* GetOrCreateComponent(EntityID entity, EntityID compID) = 0;
+		virtual void AddComponent(EntityID entity, EntityID compID) = 0;
+
+		template<typename... Args>
+		SystemBuilder<Args...> CreateSystem();
+
+		virtual EntityID InitSystem(const SystemCreateDesc& info) = 0;
+		virtual void RunSystem(EntityID entity) = 0;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -194,6 +213,13 @@ public:                                                   \
 			return *this;
 		}
 
+		template <class C>
+		const EntityBuilder& with() const
+		{
+			world->AddComponent<C>(entity);
+			return *this;
+		}
+
 		EntityID entity = INVALID_ENTITY;
 
 	private:
@@ -201,13 +227,17 @@ public:                                                   \
 		World* world;
 	};
 
+	////////////////////////////////////////////////////////////////////////////////
+	//// ComponentTypeRegister
+	////////////////////////////////////////////////////////////////////////////////
+
 	template<typename C>
 	inline EntityID ComponentTypeRegister<C>::ComponentID(World& world)
 	{
 		if (!Registered())
 		{
 			// Register component
-			componentID = world.RegisterComponent<C>();
+			componentID = RegisterComponent(world);
 			// Register reflect info
 			Reflect::Register<C>(world, componentID);
 		}
@@ -215,9 +245,88 @@ public:                                                   \
 	}
 
 	template<typename C>
+	inline EntityID ComponentTypeRegister<C>::RegisterComponent(World& world, const char* name)
+	{
+		const char* n = name;
+		if (n == nullptr)
+			n = Util::Typename<C>();
+
+		ComponentCreateDesc desc = {};
+		desc.entity.entity = INVALID_ENTITY;
+		desc.entity.name = n;
+		desc.entity.useComponentID = true;
+		desc.size = sizeof(C);
+		desc.alignment = alignof(C);
+		EntityID ret = world.InitNewComponent(desc);
+		C::componentID = ret;
+		return ret;
+	}
+
+	template<typename C>
 	bool ComponentTypeRegister<C>::Registered()
 	{
 		return componentID != INVALID_ENTITY;
+	}
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// SystemBuilder
+	////////////////////////////////////////////////////////////////////////////////
+
+	namespace _
+	{
+		template<typename Func, typename... Comps>
+		struct EachInvoker
+		{
+		public:
+			explicit EachInvoker(Func&& func_) noexcept :
+				func(std::move(func_)) {}
+
+			explicit EachInvoker(const Func& func_) noexcept :
+				func(func_) {}
+
+		private:
+			Func func;
+		};
+	}
+
+	template<typename... Comps>
+	class SystemBuilder
+	{
+	public:
+		SystemBuilder(World* world_) : 
+			world(world_),
+			compIDs({ (ComponentTypeRegister<Comps>::ComponentID(*world_))... })
+		{
+		}
+		SystemBuilder() = delete;
+
+		template<typename Func>
+		EntityID ForEach(Func&& func)
+		{
+			using Invoker = typename _::EachInvoker<typename std::decay_t<Func>, Comps...>;
+			return Build<Invoker>(std::forward<Func>(func));
+		}
+
+	private:
+		template<typename Invoker, typename Func>
+		EntityID Build(Func&& func)
+		{
+			Invoker* invoker = Util::NewObject<Invoker>(std::forward<Func>(func));
+			desc.invoker = invoker;
+			desc.invokerDeleter = reinterpret_cast<InvokerDeleter>(Util::DeleteObject<Invoker>);
+			return world->InitNewComponent(desc);
+		}
+
+	private:
+		World* world;
+		SystemCreateDesc desc = {};
+		std::array<U64, sizeof...(Comps)> compIDs;
+	};
+
+	template<typename... Args>
+	inline SystemBuilder<Args...> World::CreateSystem()
+	{
+		return SystemBuilder<Args...>(this);
 	}
 
 #include "ecs.inl"

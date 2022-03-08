@@ -155,7 +155,7 @@ namespace ECS
 	//// EntityTable
 	////////////////////////////////////////////////////////////////////////////////
 
-	// Archetype for entity, archtype is a set of componentIDs
+	// Archetype table for entity, archtype is a set of componentIDs
 	struct EntityTable
 	{
 	public:
@@ -217,6 +217,8 @@ namespace ECS
 		Util::SparseArray<ComponentRecord> compRecordPool;
 		Util::SparseArray<ComponentTypeInfo> compTypePool;
 
+		// System
+
 		WorldImpl()
 		{
 			compRecordMap.reserve(HI_COMPONENT_ID);
@@ -276,7 +278,7 @@ namespace ECS
 			return INVALID_ENTITY;
 		}
 
-		EntityID EntityIDAlive(EntityID entity) override
+		EntityID IsEntityAlive(EntityID entity)const override
 		{
 			if (entity == INVALID_ENTITY)
 				return INVALID_ENTITY;
@@ -285,6 +287,11 @@ namespace ECS
 				return entity;
 
 			return false;
+		}
+
+		EntityType GetEntityType(EntityID entity)const override
+		{
+			return EMPTY_ENTITY_TYPE;
 		}
 			
 		void DeleteEntity(EntityID entity) override
@@ -316,7 +323,7 @@ namespace ECS
 
 		void EnsureEntity(EntityID entity) override
 		{
-			if (EntityIDAlive(StripGeneration(entity)) == entity)
+			if (IsEntityAlive(StripGeneration(entity)) == entity)
 				return;
 
 			entityPool.Ensure(entity);
@@ -427,6 +434,28 @@ namespace ECS
 			void* comp = GetComponentMutable(entity, compID, &info, &isAdded);
 			assert(comp != nullptr);
 			return comp;
+		}
+
+		void AddComponent(EntityID entity, EntityID compID) override
+		{
+			assert(IsEntityAlive(entity));
+			assert(IsEntityAlive(compID));
+			EntityInternalInfo info = {};
+			GetEntityInternalInfo(info, entity);
+
+			EntityTableDiff diff = {};
+			EntityTable* newTable = TableTraverseAdd(info.table, compID, diff);
+			CommitTables(entity, &info, newTable, diff, true);
+		}
+
+		EntityID InitSystem(const SystemCreateDesc& info) override
+		{
+			return INVALID_ENTITY;
+		}
+
+		void RunSystem(EntityID entity) override
+		{
+			assert(entity != INVALID_ENTITY);
 		}
 
 	public:
@@ -587,8 +616,8 @@ namespace ECS
 		// BuildIn components
 		void RegisterBuildInComponents()
 		{
-			RegisterComponent<InfoComponent>();
-			RegisterComponent<NameComponent>();
+			ComponentTypeRegister<InfoComponent>::RegisterComponent(*this);
+			ComponentTypeRegister<NameComponent>::RegisterComponent(*this);
 		}
 
 		void InitBuildInComponents()
@@ -662,7 +691,7 @@ namespace ECS
 			{
 				do {
 					ret = lastComponentID++;
-				} while (EntityIDAlive(ret) != INVALID_ENTITY && ret <= HI_COMPONENT_ID);
+				} while (IsEntityAlive(ret) != INVALID_ENTITY && ret <= HI_COMPONENT_ID);
 			}
 
 			if (ret == INVALID_ENTITY || ret >= HI_COMPONENT_ID)
@@ -878,10 +907,10 @@ namespace ECS
 			if (t1 == t2)
 				return;
 
+			// Calculate addedCount and removedCount
 			U32 addedCount = 0;
 			U32 removedCount = 0;
 			bool trivialEdge = true;
-
 			U32 srcNumColumns = (U32)t1->storageType.size();
 			U32 dstNumColumns = (U32)t2->storageType.size();
 			U32 srcColumnIndex, dstColumnIndex;
@@ -913,36 +942,35 @@ namespace ECS
 				edge->diffIndex = -1;
 				return;
 			}
-			else
+
+			// Create a new TableDiff
+			EntityTableDiff& diff = t1->graphNode.diffs.emplace_back();
+			edge->diffIndex = (I32)t1->graphNode.diffs.size();
+			if (addedCount > 0)
+				diff.added.reserve(addedCount);
+			if (removedCount > 0)
+				diff.removed.reserve(removedCount);
+
+			for (srcColumnIndex = 0, dstColumnIndex = 0; (srcColumnIndex < srcNumColumns) && (dstColumnIndex < dstNumColumns); )
 			{
-				EntityTableDiff& diff = t1->graphNode.diffs.emplace_back();
-				edge->diffIndex = (I32)t1->graphNode.diffs.size();
-				if (addedCount > 0)
-					diff.added.reserve(addedCount);
-				if (removedCount > 0)
-					diff.removed.reserve(removedCount);
+				EntityID srcComponentID = t1->storageType[srcColumnIndex];
+				EntityID dstComponentID = t2->storageType[dstColumnIndex];
+				if (srcComponentID < dstComponentID)
+					diff.removed.push_back(srcComponentID);
+				else if (srcComponentID > dstComponentID)
+					diff.added.push_back(dstComponentID);
 
-				for (srcColumnIndex = 0, dstColumnIndex = 0; (srcColumnIndex < srcNumColumns) && (dstColumnIndex < dstNumColumns); )
-				{
-					EntityID srcComponentID = t1->storageType[srcColumnIndex];
-					EntityID dstComponentID = t2->storageType[dstColumnIndex];
-					if (srcComponentID < dstComponentID)
-						diff.removed.push_back(srcComponentID);
-					else if (srcComponentID > dstComponentID)
-						diff.added.push_back(dstComponentID);
-
-					srcColumnIndex += srcComponentID <= dstComponentID;
-					dstColumnIndex += dstComponentID <= srcComponentID;
-				}
-
-				for (; srcColumnIndex < srcNumColumns; srcColumnIndex++)
-					diff.removed.push_back(t1->storageType[srcColumnIndex]);
-				for (; dstColumnIndex < dstNumColumns; dstColumnIndex++)
-					diff.added.push_back(t2->storageType[dstColumnIndex]);
-
-				assert(diff.added.size() == addedCount);
-				assert(diff.removed.size() == removedCount);
+				srcColumnIndex += srcComponentID <= dstComponentID;
+				dstColumnIndex += dstComponentID <= srcComponentID;
 			}
+
+			for (; srcColumnIndex < srcNumColumns; srcColumnIndex++)
+				diff.removed.push_back(t1->storageType[srcColumnIndex]);
+			for (; dstColumnIndex < dstNumColumns; dstColumnIndex++)
+				diff.added.push_back(t2->storageType[dstColumnIndex]);
+
+			assert(diff.added.size() == addedCount);
+			assert(diff.removed.size() == removedCount);
 		}
 
 		void PopulateTableDiff(EntityTable* table, EntityGraphEdge* edge, EntityID addID, EntityID removeID, EntityTableDiff& diff)
@@ -1073,8 +1101,8 @@ namespace ECS
 
 				if (srcComponentID == dstComponentID)
 				{
-					void* srcMem = srcColumnData->data.Get(srcColumnData->size, srcColumnData->alignment, srcColumnIndex);
-					void* dstMem = dstColumnData->data.Get(dstColumnData->size, dstColumnData->alignment, dstColumnIndex);
+					void* srcMem = srcColumnData->data.Get(srcColumnData->size, srcColumnData->alignment, srcRow);
+					void* dstMem = dstColumnData->data.Get(dstColumnData->size, dstColumnData->alignment, dstRow);
 
 					assert(srcMem != nullptr);
 					assert(dstMem != nullptr);

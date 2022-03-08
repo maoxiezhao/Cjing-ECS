@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <assert.h>
 #include <unordered_map>
+#include <array>
 
 using U8  = uint8_t;
 using U16 = uint16_t;

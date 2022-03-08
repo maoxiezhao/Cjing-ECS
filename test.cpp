@@ -1,15 +1,10 @@
 ﻿#include "ecs.h"
 
 #include <string>
+#include <array>
 
 // #define CATCH_CONFIG_MAIN
 #include "catch.hpp"
-
-struct Position 
-{
-    float  m1 = 0.0f;
-    float  m2 = 0.0f;
-};
 
 static int clearTimes = 0;
 struct TestComponent
@@ -83,10 +78,43 @@ struct TestComponent
 //    int temp = 1;
 //    CHECK(temp == 1);
 //}
+//TEST_CASE("System", "ECS")
+//{
+//}
+
+struct PositionComponent
+{
+    COMPONENT(PositionComponent);
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+struct VelocityComponent
+{
+    COMPONENT(VelocityComponent);
+    float x = 0.0f;
+    float y = 0.0f;
+};
 
 int main()
 {
     std::unique_ptr<ECS::World> world = ECS::World::Create();
-    world->CreateEntity("AABB").with(TestComponent());
+    world->CreateEntity("a1")
+        .with<PositionComponent>()
+        .with<VelocityComponent>();
+
+    world->CreateEntity("a2")
+        .with<PositionComponent>()
+        .with<VelocityComponent>();
+
+    world->CreateSystem<PositionComponent, VelocityComponent>()
+        .ForEach([](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel)
+        {
+            pos.x += vel.x;
+            pos.y += vel.y;
+        }
+    );
+    //world->RunSystem(system);
+   
     return 0;
 }
