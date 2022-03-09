@@ -57,6 +57,8 @@ namespace ECS
 	//// Definition
 	////////////////////////////////////////////////////////////////////////////////
 
+	static const size_t QUERY_ITEM_SMALL_CACHE_SIZE = 4;
+
 	struct ComponentColumnData
 	{
 		Util::StorageVector data;    // Column element data
@@ -66,8 +68,8 @@ namespace ECS
 
 	struct EntityTableDiff
 	{
-		EntityIDs added;			// Components added between tables
-		EntityIDs removed;			// Components removed between tables
+		EntityIDs added;			// Components added between tablePool
+		EntityIDs removed;			// Components removed between tablePool
 	};
 
 	struct EntityGraphEdge
@@ -95,11 +97,18 @@ namespace ECS
 		CompTableCacheListNode* prev = nullptr;
 		CompTableCacheListNode* next = nullptr;
 	};
+
 	struct CompTableCacheList
 	{
 		CompTableCacheListNode* first = nullptr;
 		CompTableCacheListNode* last = nullptr;
 		U32 count = 0;
+	};
+
+	struct CompTableCacheListIter
+	{
+		CompTableCacheListNode* first = nullptr;
+		CompTableCacheListNode* last = nullptr;
 	};
 
 	struct CompTableRecord
@@ -126,7 +135,7 @@ namespace ECS
 
 	struct ComponentRecord
 	{
-		EntityTableCache cache;	// Record all columns and tables which used this comp  
+		EntityTableCache cache;	// Record all columns and tablePool which used this comp  
 		Hashmap<EntityTable*> addRefs;
 		Hashmap<EntityTable*> removeRefs;
 		U64 recordID;
@@ -149,6 +158,20 @@ namespace ECS
 	{
 		EntityTableEventType type = EntityTableEventType::Invalid;
 		EntityID compID = INVALID_ENTITY;
+	};
+
+	struct QueryItemIter
+	{
+		CompTableCacheListIter cacheIter;
+	};
+
+	struct QueryInfo
+	{
+		U64 queryID;
+		QueryItem* queryItems;
+		std::vector<QueryItem> queryItemsCache;
+		QueryItem queryItemSmallCache[QUERY_ITEM_SMALL_CACHE_SIZE];
+		I32 itemCount;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -193,6 +216,33 @@ namespace ECS
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
+	//// BuildIn components
+	////////////////////////////////////////////////////////////////////////////////
+
+	struct InfoComponent
+	{
+		COMPONENT(InfoComponent)
+			size_t size = 0;
+		size_t algnment = 0;
+	};
+
+	struct NameComponent
+	{
+		COMPONENT(NameComponent)
+		const char* name = nullptr;
+		U64 hash = 0;
+	};
+
+	struct SystemComponent
+	{
+		COMPONENT(SystemComponent)
+		EntityID entity;
+		SystemAction action;
+		void* invoker;
+		InvokerDeleter invokerDeleter;
+	};
+
+	////////////////////////////////////////////////////////////////////////////////
 	//// WorldImpl
 	////////////////////////////////////////////////////////////////////////////////
 
@@ -208,7 +258,7 @@ namespace ECS
 
 		// Tables
 		EntityTable root;
-		Util::SparseArray<EntityTable> tables;
+		Util::SparseArray<EntityTable> tablePool;
 		Util::SparseArray<EntityTable*> pendingTables;
 		Hashmap<EntityTable*> tableTypeHashMap;
 
@@ -219,6 +269,9 @@ namespace ECS
 
 		// System
 
+		// Query
+		Util::SparseArray<QueryInfo> queryPool;
+
 		WorldImpl()
 		{
 			compRecordMap.reserve(HI_COMPONENT_ID);
@@ -227,25 +280,27 @@ namespace ECS
 				assert(0);
 
 			// Skip id 0
-			U64 id = tables.NewIndex();
+			U64 id = tablePool.NewIndex();
 			assert(id == 0);
 
-			// Initialize build-in components
+			SetupComponentIDs();
 			InitBuildInComponents();
+			InitSystemComponent();
+
 			RegisterBuildInComponents();
 		}
 
 		~WorldImpl()
 		{	
 			// Skip id 0
-			size_t tabelCount = tables.Count();
+			size_t tabelCount = tablePool.Count();
 			for (size_t i = 1; i < tabelCount; i++)
 			{
-				EntityTable* table = tables.Get(i);
+				EntityTable* table = tablePool.Get(i);
 				if (table != nullptr)
 					table->Release();
 			}
-			tables.Clear();
+			tablePool.Clear();
 			pendingTables.Clear();
 			root.Release();
 			entityPool.Clear();
@@ -305,7 +360,7 @@ namespace ECS
 			if (entityInfo->table)
 				tableID = entityInfo->table->tableID;
 
-			if (tableID > 0 && tables.CheckExsist(tableID))
+			if (tableID > 0 && tablePool.CheckExsist(tableID))
 				entityInfo->table->DeleteEntity(entityInfo->row, true);
 
 			entityInfo->row = 0;
@@ -406,7 +461,7 @@ namespace ECS
 				return INVALID_ENTITY;
 
 			bool added = false;
-			InfoComponent* info = GetComponentMutableByID<InfoComponent>(entityID, InfoComponent::GetComponentID(), &added);
+			InfoComponent* info = GetOrCreateMutableByID<InfoComponent>(entityID, &added);
 			if (info == nullptr)
 				return INVALID_ENTITY;
 
@@ -431,7 +486,7 @@ namespace ECS
 		{
 			bool isAdded = false;
 			EntityInternalInfo info = {};
-			void* comp = GetComponentMutable(entity, compID, &info, &isAdded);
+			void* comp = GetOrCreateMutable(entity, compID, &info, &isAdded);
 			assert(comp != nullptr);
 			return comp;
 		}
@@ -448,17 +503,135 @@ namespace ECS
 			CommitTables(entity, &info, newTable, diff, true);
 		}
 
-		EntityID InitSystem(const SystemCreateDesc& info) override
+		EntityID InitNewSystem(const SystemCreateDesc& desc) override
 		{
-			return INVALID_ENTITY;
+			EntityID entity = CreateEntityID(desc.entity);
+			if (entity == INVALID_ENTITY)
+				return INVALID_ENTITY;
+
+			bool newAdded = false;
+			SystemComponent* sysComponent = GetOrCreateMutableByID<SystemComponent>(entity, &newAdded);
+			if (newAdded)
+			{
+				memset(sysComponent, 0, sizeof(SystemComponent));
+				sysComponent->entity = entity;
+				sysComponent->action = desc.action;
+				sysComponent->invoker = desc.invoker;
+				sysComponent->invokerDeleter = desc.invokerDeleter;
+			}
+			return entity;
 		}
 
 		void RunSystem(EntityID entity) override
 		{
 			assert(entity != INVALID_ENTITY);
+			SystemComponent* sysComponent =static_cast<SystemComponent*>(GetComponent(entity, SystemComponent::GetComponentID()));
+			if (sysComponent == nullptr)
+				return;
+
+			SystemAction action = sysComponent->action;
+			assert(action != nullptr);
+
+			QueryIter iter;
+			while (QueryIteratorNext(iter))
+				action(&iter);
 		}
 
 	public:
+		////////////////////////////////////////////////////////////////////////////////
+		//// Query
+		////////////////////////////////////////////////////////////////////////////////
+
+		QueryID CreateQuery(const QueryCreateDesc& desc)
+		{
+			QueryInfo* queryInfo = InitNewQuery(desc);
+			if (queryInfo == nullptr)
+				return INVALID_ENTITY;
+
+			return queryInfo->queryID;
+		}
+
+		QueryInfo* InitNewQuery(const QueryCreateDesc& desc)
+		{
+			QueryInfo* ret = queryPool.Requset();
+			assert(ret != nullptr);
+			ret->queryID = queryPool.GetLastID();
+
+			I32 itemCount = 0;
+			for (int i = 0; i < MAX_QUERY_ITEM_COUNT; i++)
+			{
+				if (desc.items[i].compID != INVALID_ENTITY)
+					itemCount++;
+			}
+
+			ret->itemCount = itemCount;
+
+			if (itemCount > 0)
+			{
+				QueryItem* itemPtr = nullptr;
+				if (itemCount < QUERY_ITEM_SMALL_CACHE_SIZE)
+				{
+					itemPtr = ret->queryItemSmallCache;
+				}
+				else
+				{
+					ret->queryItemsCache.resize(itemCount);
+					itemPtr = ret->queryItemsCache.data();
+				}
+
+				for (int i = 0; i < itemCount; i++)
+					itemPtr[i] = desc.items[i];
+
+				ret->queryItems = itemPtr;
+			}
+		
+			return ret;
+		}
+
+		QueryIter GetQueryIteratorBegin(QueryID queryID) override
+		{
+			QueryInfo* info = queryPool.Get(queryID);
+			if (info == nullptr)
+				return QueryIter();
+
+			QueryIter iter = {};
+			iter.world = this;
+			iter.items = info->queryItems ? info->queryItems : nullptr;
+			iter.itemCount = info->itemCount;
+			return QueryIter();
+		}
+
+		bool QueryIteratorNext(QueryIter& iter) override
+		{
+			// Find current talbe
+			// According the node graph to find the next table
+			assert(iter.currentItem != nullptr);
+			QueryItemIter* itemIter = iter.itemIter;
+			assert(itemIter);
+
+			bool first = false;
+			bool match = false;
+			do
+			{
+				// We need to match a new table for current id when matching count equal to zero
+				first = iter.matchingLeft == 0;
+				if (first)
+				{
+
+				}
+
+				match = iter.matchingLeft > 0;
+			}
+			while (match);
+
+			return false;
+		}
+
+		bool QueryItemIteratorNext(QueryItemIter* itemIter)
+		{
+			return true;
+		}
+			
 		////////////////////////////////////////////////////////////////////////////////
 		//// Entity
 		////////////////////////////////////////////////////////////////////////////////
@@ -620,11 +793,15 @@ namespace ECS
 			ComponentTypeRegister<NameComponent>::RegisterComponent(*this);
 		}
 
-		void InitBuildInComponents()
+		void SetupComponentIDs()
 		{
 			InfoComponent::componentID = 1;
 			NameComponent::componentID = 2;
+			SystemComponent::componentID = 3;
+		}
 
+		void InitBuildInComponents()
+		{
 			// Create build-in table for build-in components
 			EntityTable* table = nullptr;
 			{
@@ -663,11 +840,13 @@ namespace ECS
 			InitBuildInComponent(InfoComponent::GetComponentID(), sizeof(InfoComponent), alignof(InfoComponent), Util::Typename<InfoComponent>());
 			InitBuildInComponent(NameComponent::GetComponentID(), sizeof(NameComponent), alignof(NameComponent), Util::Typename<NameComponent>());
 
-			// Set component type action
+			// Set component action
+			// Info component
 			Reflect::ReflectInfo info = {};
 			info.ctor = DefaultCtor;
 			SetComponentAction(InfoComponent::GetComponentID(), info);
 
+			// Name component
 			info.ctor = Reflect::Ctor<NameComponent>();
 			info.dtor = Reflect::Dtor<NameComponent>();
 			info.copy = Reflect::Copy<NameComponent>();
@@ -678,10 +857,36 @@ namespace ECS
 			lastID = FirstUserEntityID;
 		}
 
-		template<typename C>
-		C* GetComponentMutableByID(EntityID entity, EntityID compID, bool* added)
+		void InitSystemComponent()
 		{
-			return static_cast<C*>(GetComponentMutableByID(entity, compID, added));
+			// System is a special build-in component, it build in a independent table.
+			ComponentCreateDesc desc = {};
+			desc.entity.entity = SystemComponent::componentID;
+			desc.entity.name = Util::Typename<SystemComponent>();
+			desc.entity.useComponentID = true;
+			desc.size = sizeof(SystemComponent);
+			desc.alignment = alignof(SystemComponent);
+			SystemComponent::componentID = InitNewComponent(desc);
+
+			// Set system component action
+			Reflect::ReflectInfo info = {};
+			info.ctor = DefaultCtor;
+			info.dtor = [](World* world, EntityID* entities, size_t size, size_t count, void* ptr) {
+				SystemComponent* sysArr = static_cast<SystemComponent*>(ptr);
+				for (size_t i = 0; i < count; i++)
+				{
+					SystemComponent& sys = sysArr[i];
+					if (sys.invoker != nullptr && sys.invokerDeleter != nullptr)
+						sys.invokerDeleter(sys.invoker);
+				}
+			};
+			SetComponentAction(SystemComponent::GetComponentID(), info);
+		}
+
+		template<typename C>
+		C* GetOrCreateMutableByID(EntityID entity, bool* added)
+		{
+			return static_cast<C*>(GetOrCreateMutableByID(entity, C::GetComponentID(), added));
 		}
 
 		EntityID CreateNewComponentID()
@@ -719,15 +924,15 @@ namespace ECS
 			return columnData.data.Get(columnData.size, columnData.alignment, row);
 		}
 
-		void* GetComponentMutableByID(EntityID entity, EntityID compID, bool* added)
+		void* GetOrCreateMutableByID(EntityID entity, EntityID compID, bool* added)
 		{
 			EntityInternalInfo internalInfo = {};
-			void* ret = GetComponentMutable(entity, compID, &internalInfo, added);
+			void* ret = GetOrCreateMutable(entity, compID, &internalInfo, added);
 			assert(ret != nullptr);
 			return ret;
 		}
 
-		void* GetComponentMutable(EntityID entity, EntityID compID, EntityInternalInfo* info, bool* isAdded)
+		void* GetOrCreateMutable(EntityID entity, EntityID compID, EntityInternalInfo* info, bool* isAdded)
 		{
 			void* ret = nullptr;
 			if (GetEntityInternalInfo(*info, entity) && info->table != nullptr)
@@ -763,7 +968,7 @@ namespace ECS
 		void SetComponent(EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove)
 		{
 			EntityInternalInfo info = {};
-			void* dst = GetComponentMutable(entity, compID, &info, NULL);
+			void* dst = GetOrCreateMutable(entity, compID, &info, NULL);
 			assert(dst != NULL);
 			if (ptr)
 			{
@@ -808,9 +1013,9 @@ namespace ECS
 		////////////////////////////////////////////////////////////////////////////////
 		EntityTable* CreateNewTable(EntityType entityType)
 		{
-			EntityTable* ret = tables.Requset();
+			EntityTable* ret = tablePool.Requset();
 			assert(ret != nullptr);
-			ret->tableID = tables.GetLastID();
+			ret->tableID = tablePool.GetLastID();
 			ret->type = entityType;
 			if (!ret->InitTable(this))
 			{
@@ -1270,15 +1475,15 @@ namespace ECS
 		{
 			if (tableID == 0)
 			{
-				for (int i = 0; i < tables.Count(); i++)
+				for (int i = 0; i < tablePool.Count(); i++)
 				{
-					EntityTable* table = tables.Get(i);
+					EntityTable* table = tablePool.Get(i);
 					NotifyTable(table, ent);
 				}
 			}
 			else
 			{
-				EntityTable* table = tables.Get(tableID);
+				EntityTable* table = tablePool.Get(tableID);
 				if (table != nullptr)
 					NotifyTable(table, ent);
 			}
@@ -1440,7 +1645,7 @@ namespace ECS
 			world->tableTypeHashMap.erase(EntityTypeHash(type));
 		}
 
-		world->tables.Remove(tableID);
+		world->tablePool.Remove(tableID);
 	}
 
 	void EntityTable::FiniData(bool updateEntity, bool deleted)

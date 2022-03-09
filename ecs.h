@@ -15,25 +15,29 @@ namespace ECS
 
 	template<typename... Args>
 	class SystemBuilder;
+	template<typename... Comps>
+	class Query;
 
 	using EntityID = U64;
 	using EntityIDs = std::vector<EntityID>;
 	using EntityType = std::vector<EntityID>;
-	
+	using QueryID = U64;
+
 	static const EntityID INVALID_ENTITY = 0;
 	static const EntityType EMPTY_ENTITY_TYPE = EntityType();
 
 	template<typename Value>
 	using Hashmap = std::unordered_map<U64, Value>;
 
+	static const EntityID HI_COMPONENT_ID = 256;
+	static const size_t MAX_QUERY_ITEM_COUNT = 16;
+
 	////////////////////////////////////////////////////////////////////////////////
 	//// Components
 	////////////////////////////////////////////////////////////////////////////////
 
-	static const EntityID HI_COMPONENT_ID = 256;
-
 #define COMPONENT_INTERNAL(CLAZZ)                         \
-	static inline ECS::EntityID componentID = UINT32_MAX;      \
+	static inline ECS::EntityID componentID = UINT32_MAX; \
 public:                                                   \
 	static ECS::EntityID GetComponentID() { return componentID; }                                
 
@@ -88,12 +92,12 @@ public:                                                   \
 		bool isSet;
 	};
 
-    struct EntityCreateDesc 
+	struct EntityCreateDesc
 	{
-        EntityID entity = INVALID_ENTITY;
-        const char* name = nullptr;
+		EntityID entity = INVALID_ENTITY;
+		const char* name = nullptr;
 		bool useComponentID = false;	// For component id (0~256)
-    };
+	};
 
 	struct ComponentCreateDesc
 	{
@@ -102,30 +106,41 @@ public:                                                   \
 		size_t size = 0;
 	};
 
-	typedef void (*InvokerDeleter)(void* ptr);
+	struct QueryItem
+	{
+		EntityID compID;
+	};
+
+	// TODO: move to ecs.cpp
+	struct QueryIter
+	{
+		World* world;
+		QueryItem* items;
+		void** compDatas;
+		size_t itemCount;
+		void* invoker;
+
+		// Runtime
+		QueryItem* currentItem;
+		I32 provitItemIndex;
+		I32 matchingLeft;
+		struct QueryItemIter* itemIter;
+	};
+
+	struct QueryCreateDesc
+	{
+		QueryItem items[MAX_QUERY_ITEM_COUNT];
+	};
+
+	using InvokerDeleter = void(*)(void* ptr);
+	using SystemAction = void(*)(QueryIter* iter);
 
 	struct SystemCreateDesc
 	{
 		EntityCreateDesc entity = {};
+		SystemAction action;
 		void* invoker;
 		InvokerDeleter invokerDeleter;
-	};
-
-	//////////////////////////////////////////////
-	// BuildIn components
-	struct InfoComponent
-	{
-		COMPONENT(InfoComponent)
-		size_t size = 0;
-		size_t algnment = 0;
-	};
-
-	class NameComponent
-	{
-	public:
-		COMPONENT(NameComponent)
-			const char* name = nullptr;
-		U64 hash = 0;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -191,9 +206,14 @@ public:                                                   \
 
 		template<typename... Args>
 		SystemBuilder<Args...> CreateSystem();
-
-		virtual EntityID InitSystem(const SystemCreateDesc& info) = 0;
+		virtual EntityID InitNewSystem(const SystemCreateDesc& desc) = 0;
 		virtual void RunSystem(EntityID entity) = 0;
+
+		template<typename... Comps>
+		Query<Comps...> CreateQuery();
+		virtual QueryID CreateQuery(const QueryCreateDesc& desc) = 0;
+		virtual QueryIter GetQueryIteratorBegin(QueryID queryID) = 0;
+		virtual bool QueryIteratorNext(QueryIter& iter) = 0;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -269,7 +289,7 @@ public:                                                   \
 	}
 
 	////////////////////////////////////////////////////////////////////////////////
-	//// SystemBuilder
+	//// Invoker
 	////////////////////////////////////////////////////////////////////////////////
 
 	namespace _
@@ -284,10 +304,71 @@ public:                                                   \
 			explicit EachInvoker(const Func& func_) noexcept :
 				func(func_) {}
 
+			// SystemCreateDesc.invoker => EachInvoker
+			static void Run(QueryIter* iter)
+			{
+				EachInvoker* invoker = static_cast<EachInvoker*>(iter->invoker);
+				assert(invoker != nullptr);
+				invoker->Invoke(iter);
+			}
+
+			// Get entity and components for func
+			void Invoke(QueryIter* iter)
+			{
+				// Balalbalabalabalballbal
+			}
+
 		private:
 			Func func;
 		};
 	}
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Query
+	////////////////////////////////////////////////////////////////////////////////
+	template<typename... Comps>
+	class Query
+	{
+	public:
+		Query(World* world_) :
+			world(world_),
+			compIDs({ (ComponentTypeRegister<Comps>::ComponentID(*world_))... })
+		{
+			QueryCreateDesc desc = {};
+			for (int i = 0; i < compIDs.size(); i++)
+			{
+				QueryItem& item = desc.items[i];
+				item.compID = compIDs[i];
+			}
+			queryID = world->CreateQuery(desc);
+		}
+		Query() = delete;
+
+		template<typename Func>
+		void ForEach(Func&& func)
+		{
+			assert(queryID > 0);
+			using Invoker = typename _::EachInvoker<typename std::decay_t<Func>, Comps...>;
+			QueryIter iter = world->GetQueryIteratorBegin(queryID);
+			while (world->QueryIteratorNext(iter))
+				Invoker(std::forward<Func>(func)).Invoke(&iter);
+		}
+
+	private:
+		World* world;
+		std::array<U64, sizeof...(Comps)> compIDs;
+		QueryID queryID;
+	};
+
+	template<typename... Comps>
+	inline Query<Comps...> World::CreateQuery()
+	{
+		return Query<Comps...>(this);
+	}
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// SystemBuilder
+	////////////////////////////////////////////////////////////////////////////////
 
 	template<typename... Comps>
 	class SystemBuilder
@@ -312,9 +393,10 @@ public:                                                   \
 		EntityID Build(Func&& func)
 		{
 			Invoker* invoker = Util::NewObject<Invoker>(std::forward<Func>(func));
+			desc.action = Invoker::Run;
 			desc.invoker = invoker;
 			desc.invokerDeleter = reinterpret_cast<InvokerDeleter>(Util::DeleteObject<Invoker>);
-			return world->InitNewComponent(desc);
+			return world->InitNewSystem(desc);
 		}
 
 	private:

@@ -107,14 +107,17 @@ int main()
         .with<PositionComponent>()
         .with<VelocityComponent>();
 
-    world->CreateSystem<PositionComponent, VelocityComponent>()
-        .ForEach([](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel)
-        {
-            pos.x += vel.x;
-            pos.y += vel.y;
-        }
-    );
+    //ECS::EntityID system = world->CreateSystem<PositionComponent, VelocityComponent>()
+    //    .ForEach([](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel)
+    //    {
+    //        pos.x += vel.x;
+    //        pos.y += vel.y;
+    //    }
+    //);
+
     //world->RunSystem(system);
-   
+
+    auto query = world->CreateQuery<PositionComponent, VelocityComponent>();
+
     return 0;
 }
