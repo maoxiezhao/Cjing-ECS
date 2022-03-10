@@ -96,28 +96,118 @@ struct VelocityComponent
     float y = 0.0f;
 };
 
+template <typename T, typename = int>
+struct EachColumn { };
+
+struct EachColumnBase 
+{
+    EachColumnBase(void* ptr_) : ptr(ptr_) {}
+
+protected:
+    void* ptr;
+};
+
+template<typename T>
+struct EachColumn<T, std::enable_if_t<!std::is_pointer_v<T>, int>> : EachColumnBase
+{
+    EachColumn(void* ptr) : EachColumnBase(ptr) {};
+
+    T& Get()
+    {
+        return *static_cast<T*>(ptr);
+    }
+};
+
+template<typename... Comps>
+struct CompArray
+{
+    using Array = std::array<void*, sizeof...(Comps)>;
+    Array compArray;
+
+    void Populate(ECS::World& world, ECS::EntityID entity)
+    {
+        return PopulateImpl(world, entity, 0, static_cast<std::decay_t<Comps>*>(nullptr)...);
+    }
+
+private:
+    void PopulateImpl(ECS::World& world, ECS::EntityID entity, size_t) { return; }
+
+    template<typename CompPtr, typename... Comps>
+    void PopulateImpl(ECS::World& world, ECS::EntityID entity, size_t index, CompPtr, Comps... comps)
+    {
+        compArray[index] = world.GetComponent<std::remove_pointer_t<CompPtr>>(entity);
+        return PopulateImpl(world, entity, index + 1, comps...);
+    }
+};
+
+template<typename Func, typename... Comps>
+struct EachInvoker
+{
+    using CompArr = typename CompArray<Comps ...>::Array;
+
+    static void Invoke(ECS::World& world, ECS::EntityID entity, Func&& func)
+    {
+        CompArray<Comps...> compArray;
+        compArray.Populate(world, entity);
+        InvokeImpl(entity, func, 0, compArray.compArray);
+    }
+
+private:
+
+    template<typename... Args, std::enable_if_t<sizeof...(Comps) == sizeof...(Args), int> = 0>
+    static void InvokeImpl(ECS::EntityID entity, const Func& func, size_t index, CompArr&, Args... comps)
+    {
+        func(entity, (EachColumn<std::remove_reference_t<Comps>>(comps).Get())...);
+    }
+
+    template<typename... Args, std::enable_if_t<sizeof...(Comps) != sizeof...(Args), int> = 0>
+    static void InvokeImpl(ECS::EntityID entity, const Func& func, size_t index, CompArr& compArr, Args... comps)
+    {
+        std::cout << "Comps:" << sizeof...(Comps) << " Args:" << sizeof...(Args) << std::endl;
+        InvokeImpl(entity, func, index + 1, compArr, comps..., compArr[index]);
+    }
+};
+
+template<typename... Comps>
+struct EachBuilder
+{
+    template<typename Func>
+    static void Run(ECS::World& world, ECS::EntityID entity, Func&& func)
+    {
+        using Invoker = EachInvoker<Func, Comps...>;
+        Invoker::Invoke(world, entity, std::forward<Func>(func));
+    }
+};
+
 int main()
 {
     std::unique_ptr<ECS::World> world = ECS::World::Create();
-    world->CreateEntity("a1")
+    ECS::EntityID entity = world->CreateEntity("a1")
         .with<PositionComponent>()
-        .with<VelocityComponent>();
+        .with<VelocityComponent>().entity;
+
+    PositionComponent* pos = world->GetComponent<PositionComponent>(entity);
+    pos->x = 2000.0f;
 
     world->CreateEntity("a2")
         .with<PositionComponent>()
         .with<VelocityComponent>();
 
-    //ECS::EntityID system = world->CreateSystem<PositionComponent, VelocityComponent>()
+    //world->CreateSystem<PositionComponent, VelocityComponent>()
     //    .ForEach([](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel)
     //    {
     //        pos.x += vel.x;
     //        pos.y += vel.y;
     //    }
     //);
-
     //world->RunSystem(system);
 
-    auto query = world->CreateQuery<PositionComponent, VelocityComponent>();
-
+    EachBuilder<PositionComponent, VelocityComponent>::Run(
+        *world, entity,
+        [](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
+            std::cout << pos.x << std::endl;
+            std::cout << vel.x << std::endl;
+        });
+   
     return 0;
 }

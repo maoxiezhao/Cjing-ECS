@@ -111,20 +111,26 @@ public:                                                   \
 		EntityID compID;
 	};
 
-	// TODO: move to ecs.cpp
+	struct QueryIterImpl;
 	struct QueryIter
 	{
+	public:
 		World* world;
 		QueryItem* items;
-		void** compDatas;
 		size_t itemCount;
 		void* invoker;
 
-		// Runtime
-		QueryItem* currentItem;
-		I32 provitItemIndex;
-		I32 matchingLeft;
-		struct QueryItemIter* itemIter;
+		size_t count;
+		EntityID* entities;
+		void** compDatas;
+
+		QueryIter();
+		~QueryIter();
+
+	private:
+		friend class World;
+		friend struct WorldImpl; // TODO
+		QueryIterImpl* impl;
 	};
 
 	struct QueryCreateDesc
@@ -212,7 +218,7 @@ public:                                                   \
 		template<typename... Comps>
 		Query<Comps...> CreateQuery();
 		virtual QueryID CreateQuery(const QueryCreateDesc& desc) = 0;
-		virtual QueryIter GetQueryIteratorBegin(QueryID queryID) = 0;
+		virtual QueryIter GetQueryIterator(QueryID queryID) = 0;
 		virtual bool QueryIteratorNext(QueryIter& iter) = 0;
 	};
 
@@ -315,10 +321,14 @@ public:                                                   \
 			// Get entity and components for func
 			void Invoke(QueryIter* iter)
 			{
-				// Balalbalabalabalballbal
+				InvokeImpl(iter, func, 0, iter->items);
 			}
 
 		private:
+			static void InvokeImpl(QueryIter* iter, const Func& func, size_t index, QueryItem* columns)
+			{
+			}
+			
 			Func func;
 		};
 	}
@@ -349,7 +359,7 @@ public:                                                   \
 		{
 			assert(queryID > 0);
 			using Invoker = typename _::EachInvoker<typename std::decay_t<Func>, Comps...>;
-			QueryIter iter = world->GetQueryIteratorBegin(queryID);
+			QueryIter iter = world->GetQueryIterator(queryID);
 			while (world->QueryIteratorNext(iter))
 				Invoker(std::forward<Func>(func)).Invoke(&iter);
 		}
