@@ -49,7 +49,8 @@ namespace ECS
 
 	static bool RegisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column);
 	static bool UnregisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column);
-	
+	static bool FlushTableState(WorldImpl* world, EntityTable* table, EntityID id, I32 column);
+
 	using EntityIDAction = bool(*)(WorldImpl*, EntityTable*, EntityID, I32);
 	bool ForEachEntityID(WorldImpl* world, EntityTable* table, EntityIDAction action);
 
@@ -195,12 +196,33 @@ namespace ECS
 		impl = (QueryIterImpl*)malloc(sizeof(QueryIterImpl));
 		assert(impl);
 		memset(impl, 0, sizeof(QueryIterImpl));
+		new (impl) QueryIterImpl();
 	}
 
 	QueryIter::~QueryIter()
 	{
 		if (impl != nullptr)
+		{
+			impl->~QueryIterImpl();
 			free(impl);
+		}
+	}
+
+	QueryIter::QueryIter(QueryIter&& rhs)noexcept
+	{
+		*this = std::move(rhs);
+	}
+
+	void QueryIter::operator=(QueryIter&& rhs)noexcept
+	{
+		std::swap(world, rhs.world);
+		std::swap(items, rhs.items);
+		std::swap(itemCount, rhs.itemCount);
+		std::swap(invoker, rhs.invoker);
+		std::swap(entityCount, rhs.entityCount);
+		std::swap(entities, rhs.entities);
+		std::swap(compDatas, rhs.compDatas);
+		std::swap(impl, rhs.impl);
 	}
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -231,6 +253,7 @@ namespace ECS
 	
 		bool InitTable(WorldImpl* world_);
 		void Claim();
+		void Flush();
 		void Release();
 		void Free();
 		void FiniData(bool updateEntity, bool deleted);
@@ -242,6 +265,7 @@ namespace ECS
 		void RemoveColumn(U32 index);
 		void GrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
 		U32  AppendNewEntity(EntityID entity, EntityInfo* info, bool construct);
+		size_t Count()const;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -269,6 +293,7 @@ namespace ECS
 		SystemAction action;
 		void* invoker;
 		InvokerDeleter invokerDeleter;
+		QueryInfo* query;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -331,6 +356,7 @@ namespace ECS
 			tablePool.Clear();
 			pendingTables.Clear();
 			root.Release();
+			FiniQueries();
 			entityPool.Clear();
 		}
 
@@ -531,6 +557,10 @@ namespace ECS
 			CommitTables(entity, &info, newTable, diff, true);
 		}
 
+		////////////////////////////////////////////////////////////////////////////////
+		//// System
+		////////////////////////////////////////////////////////////////////////////////
+
 		EntityID InitNewSystem(const SystemCreateDesc& desc) override
 		{
 			EntityID entity = CreateEntityID(desc.entity);
@@ -546,6 +576,12 @@ namespace ECS
 				sysComponent->action = desc.action;
 				sysComponent->invoker = desc.invoker;
 				sysComponent->invokerDeleter = desc.invokerDeleter;
+
+				QueryInfo* queryInfo = InitNewQuery(desc.query);
+				if (queryInfo == nullptr)
+					return INVALID_ENTITY;
+
+				sysComponent->query = queryInfo;
 			}
 			return entity;
 		}
@@ -559,8 +595,11 @@ namespace ECS
 
 			SystemAction action = sysComponent->action;
 			assert(action != nullptr);
+			assert(sysComponent->query != nullptr);
+			assert(sysComponent->invoker != nullptr);
 
-			QueryIter iter;
+			QueryIter iter = GetQueryIterator(sysComponent->query->queryID);
+			iter.invoker = sysComponent->invoker;
 			while (QueryIteratorNext(iter))
 				action(&iter);
 		}
@@ -570,13 +609,22 @@ namespace ECS
 		//// Query
 		////////////////////////////////////////////////////////////////////////////////
 
-		QueryID CreateQuery(const QueryCreateDesc& desc)
+		QueryID CreateQuery(const QueryCreateDesc& desc) override
 		{
 			QueryInfo* queryInfo = InitNewQuery(desc);
 			if (queryInfo == nullptr)
 				return INVALID_ENTITY;
 
 			return queryInfo->queryID;
+		}
+
+		void DestroyQuery(QueryID queryID) override
+		{
+			QueryInfo* queryInfo = queryPool.Get(queryID);
+			if (queryInfo == nullptr)
+				return;
+
+			FiniQuery(queryInfo);
 		}
 
 		QueryInfo* InitNewQuery(const QueryCreateDesc& desc)
@@ -616,8 +664,28 @@ namespace ECS
 			return ret;
 		}
 
+		void FiniQuery(QueryInfo* query)
+		{
+			if (query == nullptr)
+				return;
+
+			queryPool.Remove(query->queryID);
+		}
+
+		void FiniQueries()
+		{
+			size_t queryCount = queryPool.Count();
+			for (size_t i = 0; i < queryCount; i++)
+			{
+				QueryInfo* query = queryPool.Get(i);
+				FiniQuery(query);
+			}
+		}
+
 		QueryIter GetQueryIterator(QueryID queryID) override
 		{
+			FlushPendingTables();
+
 			QueryInfo* info = queryPool.Get(queryID);
 			if (info == nullptr)
 				return QueryIter();
@@ -664,7 +732,7 @@ namespace ECS
 			impl.itemIter.tableCacheIter.cur = nullptr;
 			impl.itemIter.tableCacheIter.next = impl.itemIter.compRecord->cache.tables.first;
 
-			return iter;
+			return std::move(iter);
 		}
 
 		bool QueryCheckItemMatchTableType(EntityTable* table, QueryItem& item, EntityID* outID, I32* outColumn)
@@ -699,7 +767,7 @@ namespace ECS
 
 			return true;
 		}
-
+		 
 		bool QueryIteratorNext(QueryIter& iter) override
 		{
 			// Find current talbe
@@ -741,14 +809,15 @@ namespace ECS
 				match = impl.matchingLeft > 0;
 				impl.matchingLeft--;
 			}
-			while (match);
+			while (!match);
 
 			if (table == nullptr)
 				return false;
 
 			// Populate datas
-			iter.count = table->entities.size();
+			iter.entityCount = table->entities.size();
 			iter.entities = table->entities.data();
+			iter.compDatas.resize(iter.itemCount);
 			for (int i = 0; i < iter.itemCount; i++)
 			{
 				ComponentColumnData& columnData = table->storageColumns[impl.columns[i]];
@@ -795,9 +864,10 @@ namespace ECS
 			if (table == nullptr)
 			{
 				tableRecord = GetNextTable(itemIter);
-				table = tableRecord->table;
+				if (tableRecord == nullptr)
+					return false;
 
-				itemIter->table = table;
+				itemIter->table = tableRecord->table;
 				itemIter->curMatch = 0;
 				itemIter->matchCount = tableRecord->count;
 				itemIter->column = tableRecord->column;
@@ -1046,12 +1116,16 @@ namespace ECS
 			Reflect::ReflectInfo info = {};
 			info.ctor = DefaultCtor;
 			info.dtor = [](World* world, EntityID* entities, size_t size, size_t count, void* ptr) {
+				WorldImpl* worldImpl = static_cast<WorldImpl*>(world);
 				SystemComponent* sysArr = static_cast<SystemComponent*>(ptr);
 				for (size_t i = 0; i < count; i++)
 				{
 					SystemComponent& sys = sysArr[i];
 					if (sys.invoker != nullptr && sys.invokerDeleter != nullptr)
 						sys.invokerDeleter(sys.invoker);
+
+					if (sys.query != nullptr)
+						worldImpl->FiniQuery(sys.query);
 				}
 			};
 			SetComponentAction(SystemComponent::GetComponentID(), info);
@@ -1538,6 +1612,23 @@ namespace ECS
 				CompDestruct(srcTable, srcEntity, srcTable->storageColumns[srcColumnIndex].size, srcColumnIndex, srcRow);
 		}
 
+		void FlushPendingTables()
+		{
+			if (pendingTables.Count() == 0)
+				return;
+
+			for (size_t i = 0; i < pendingTables.Count(); i++)
+			{
+				EntityTable* table = *pendingTables.GetByDense(i);
+				if (table == nullptr || table->tableID == 0)
+					continue;
+
+				// Flush state of pending table
+				ForEachEntityID(this, table, FlushTableState);
+			}
+			pendingTables.Clear();	// TODO
+		}
+
 		////////////////////////////////////////////////////////////////////////////////
 		//// TableCache
 		////////////////////////////////////////////////////////////////////////////////
@@ -1609,6 +1700,33 @@ namespace ECS
 				list.first = node->next;
 			if (node == list.last)
 				list.last = node->prev;
+		}
+
+		void SetTableCacheState(EntityTableCache* cache, EntityTable* table, bool isEmpty)
+		{
+			auto it = cache->tableRecordMap.find(table->tableID);
+			if (it == cache->tableRecordMap.end())
+				return;
+
+			CompTableCacheListNode* node = it->second;
+			if (node == nullptr)
+				return;
+		
+			if (node->empty == isEmpty)
+				return;
+
+			node->empty = isEmpty;
+
+			if (isEmpty)
+			{
+				RemoveTableCacheNode(cache->tables, node);
+				InsertTableCacheNode(cache->emptyTables, node);
+			}
+			else
+			{
+				RemoveTableCacheNode(cache->emptyTables, node);
+				InsertTableCacheNode(cache->tables, node);
+			}
 		}
 
 		////////////////////////////////////////////////////////////////////////////////
@@ -1794,6 +1912,11 @@ namespace ECS
 		refCount++;
 	}
 
+	void EntityTable::Flush()
+	{
+		// TODO
+	}
+
 	void EntityTable::Release()
 	{
 		assert(refCount > 0);
@@ -1944,8 +2067,8 @@ namespace ECS
 			entityInfoToMove->row = index;
 
 		// Pending empty table
-		// if (count == 0)
-		//	SetTableEmpty(table);
+		 if (count == 0)
+			world->SetTableEmpty(this);
 
 		if (index == count)
 		{
@@ -2047,7 +2170,16 @@ namespace ECS
 			GrowColumn(entities, columnData, compTypeInfo, 1, newCapacity, construct);
 		}
 
+		// Pending empty table
+		if (index == 0)
+			world->SetTableEmpty(this);
+
 		return index;
+	}
+
+	size_t EntityTable::Count()const
+	{
+		return entities.size();
 	}
 
 	bool RegisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column)
@@ -2088,6 +2220,16 @@ namespace ECS
 			// Remove the component id
 			world->RemoveCompRecord(id, compRecord);
 		}
+		return true;
+	}
+
+	bool FlushTableState(WorldImpl* world, EntityTable* table, EntityID id, I32 column)
+	{
+		ComponentRecord* compRecord = world->GetComponentRecord(id);
+		if (compRecord == nullptr)
+			return false;
+
+		world->SetTableCacheState(&compRecord->cache, table, table->Count() == 0);
 		return true;
 	}
 

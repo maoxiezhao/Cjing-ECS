@@ -82,20 +82,6 @@ struct TestComponent
 //{
 //}
 
-struct PositionComponent
-{
-    COMPONENT(PositionComponent);
-    float x = 0.0f;
-    float y = 0.0f;
-};
-
-struct VelocityComponent
-{
-    COMPONENT(VelocityComponent);
-    float x = 0.0f;
-    float y = 0.0f;
-};
-
 template <typename T, typename = int>
 struct EachColumn { };
 
@@ -179,6 +165,41 @@ struct EachBuilder
     }
 };
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+struct PositionComponent
+{
+    COMPONENT(PositionComponent);
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+struct VelocityComponent
+{
+    COMPONENT(VelocityComponent);
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
 int main()
 {
     std::unique_ptr<ECS::World> world = ECS::World::Create();
@@ -193,21 +214,19 @@ int main()
         .with<PositionComponent>()
         .with<VelocityComponent>();
 
-    //world->CreateSystem<PositionComponent, VelocityComponent>()
-    //    .ForEach([](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel)
-    //    {
-    //        pos.x += vel.x;
-    //        pos.y += vel.y;
-    //    }
-    //);
-    //world->RunSystem(system);
+    for (int i = 0; i < 500; i++)
+    {
+        world->CreateEntity((std::string("A") + std::to_string(i)).c_str())
+            .with<PositionComponent>()
+            .with<VelocityComponent>();
+    }
 
-    EachBuilder<PositionComponent, VelocityComponent>::Run(
-        *world, entity,
-        [](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
-            std::cout << pos.x << std::endl;
-            std::cout << vel.x << std::endl;
-        });
-   
+    ECS::EntityID system = world->CreateSystem<PositionComponent, VelocityComponent>()
+        .ForEach([](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel)
+        {
+            std::cout << "System update:" << entity << std::endl;
+        }
+    );
+    world->RunSystem(system);
     return 0;
 }

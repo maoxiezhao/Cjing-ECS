@@ -377,6 +377,24 @@ namespace Util
 			return GetChunkOffset(chunk, GetOffsetFromIndex(index));
 		}
 
+		T* GetByDense(size_t dense)
+		{
+			assert(dense < count);
+			dense++;
+			return Get(dense, denseArray[dense]);
+		}
+
+		T* Get(size_t dense, U64 index)
+		{
+			Chunk* chunk = GetChunk(GetChunkIndexFromIndex(index));
+			if (chunk == nullptr)
+				return nullptr;
+
+			size_t offset = GetOffsetFromIndex(index);
+			assert(dense == chunk->sparse[offset]);
+			return GetChunkOffset(chunk, offset);
+		}
+
 		T* Get(U64 index)
 		{
 			Chunk* chunk = GetChunk(GetChunkIndexFromIndex(index));
