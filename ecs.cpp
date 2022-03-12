@@ -6,49 +6,33 @@ namespace ECS
 	struct EntityTable;
 	struct EntityInfo;
 
-// EntityID
-// FFFFffff   | FFFFffff
-// Generation |  ID
-#define ECS_ENTITY_MASK               (0xFFFFffffull)
-#define ECS_GENERATION_MASK           (0xFFFFull << 32)
-#define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
+	// EntityID FFFFffff << 32 | FFFFffff
+	//          generation       realID
+	#define ECS_ENTITY_MASK               (0xFFFFffffull) // 32
+	#define ECS_ROLE_MASK                 (0xFFull << 56)
+    #define ECS_COMPONENT_MASK            (~ECS_ROLE_MASK) // 56
+	#define ECS_GENERATION_MASK           (0xFFFFull << 32)
+	#define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
 
-	namespace
+	const U32 FirstUserComponentID = 32;
+	const U32 FirstUserEntityID = HI_COMPONENT_ID + 128;
+	const size_t QUERY_ITEM_SMALL_CACHE_SIZE = 4;
+
+	inline U64 EntityTypeHash(const EntityType& entityType)
 	{
-		const U32 FirstUserComponentID = 32;
-		const U32 FirstUserEntityID = HI_COMPONENT_ID + 128;
-
-		U64 EntityTypeHash(const EntityType& entityType)
-		{
-			return Util::HashFunc(entityType.data(), entityType.size() * sizeof(EntityID));
-		}
-
-		EntityID StripGeneration(EntityID id)
-		{
-			return id & (~ECS_GENERATION_MASK);
-		}
-
-		U8* DataVectorAdd(std::vector<U8>& data, U32 elemSize, U32 alignment)
-		{
-			return nullptr;
-		}
-
-		U8* DataVectorAddN(std::vector<U8>& data, U32 elemSize, U32 alignment, U32 count)
-		{
-			if (count == 1)
-				return DataVectorAdd(data, elemSize, alignment);
-
-			return nullptr;
-		}
-
-		void DefaultCtor(World* world, EntityID* entities, size_t size, size_t count, void* ptr)
-		{
-			memset(ptr, 0, size * count);
-		}
+		return Util::HashFunc(entityType.data(), entityType.size() * sizeof(EntityID));
 	}
 
-	static bool RegisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column);
-	static bool UnregisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column);
+	inline EntityID StripGeneration(EntityID id)
+	{
+		return id & (~ECS_GENERATION_MASK);
+	}
+
+	inline void DefaultCtor(World* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	{
+		memset(ptr, 0, size * count);
+	}
+
 	static bool FlushTableState(WorldImpl* world, EntityTable* table, EntityID id, I32 column);
 
 	using EntityIDAction = bool(*)(WorldImpl*, EntityTable*, EntityID, I32);
@@ -58,41 +42,85 @@ namespace ECS
 	//// Definition
 	////////////////////////////////////////////////////////////////////////////////
 
-	static const size_t QUERY_ITEM_SMALL_CACHE_SIZE = 4;
-
-	struct ComponentColumnData
-	{
-		Util::StorageVector data;    // Column element data
-		I64 size = 0;                // Column element size
-		I64 alignment = 0;           // Column element alignment
-	};
-
 	struct EntityTableDiff
 	{
 		EntityIDs added;			// Components added between tablePool
 		EntityIDs removed;			// Components removed between tablePool
 	};
 
-	struct EntityGraphEdge
+	static EntityTableDiff EMPTY_TABLE_DIFF;
+
+	///////////////////////////////////////////////////////////////
+	// Table graph
+
+	struct TableGraphEdgeListNode
 	{
-		EntityTable* next = nullptr;
-		I32 diffIndex = -1;			// mapping to EntityGraphNode diffBuffer
+		struct TableGraphEdgeListNode* prev;
+		struct TableGraphEdgeListNode* next;
 	};
-	struct EntityGraphEdges
+
+	struct TableGraphEdge
 	{
-		EntityGraphEdge loEdges[HI_COMPONENT_ID];
-		Hashmap<EntityGraphEdge> hiEdges;
+		TableGraphEdgeListNode listNode;
+		EntityTable* from;
+		EntityTable* to;
+		EntityID compID;
+		EntityTableDiff* diff;			// mapping to TableGraphNode diffBuffer
 	};
-	struct EntityGraphNode
+
+	struct TableGraphEdges
 	{
-		EntityGraphEdges add;
-		EntityGraphEdges remove;
-		std::vector<EntityTableDiff> diffs;
+		TableGraphEdge loEdges[HI_COMPONENT_ID]; // id < HI_COMPONENT_ID
+		Hashmap<TableGraphEdge> hiEdges;
 	};
+
+	struct TableGraphNode
+	{
+		TableGraphEdges add;
+		TableGraphEdges remove;
+		TableGraphEdgeListNode incomingEdges;
+	};
+
+	///////////////////////////////////////////////////////////////
+	// Entity info
+
+	// EntityID <-> EntityInfo
+	struct EntityInfo
+	{
+		EntityTable* table = nullptr;
+		I32 row = 0;
+	};
+
+	struct EntityInternalInfo
+	{
+		EntityTable* table = nullptr;
+		I32 row = 0;
+		EntityInfo* entityInfo = nullptr;
+	};
+
+	///////////////////////////////////////////////////////////////
+	// Event
+
+	enum class EntityTableEventType
+	{
+		Invalid,
+		ComponentTypeInfo
+	};
+
+	struct EntityTableEvent
+	{
+		EntityTableEventType type = EntityTableEventType::Invalid;
+		EntityID compID = INVALID_ENTITY;
+	};
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Table cache
+	////////////////////////////////////////////////////////////////////////////////
 
 	// Dual link list to manage TableRecords
 	struct CompTableCacheListNode
 	{
+		struct EntityTableCache* cache = nullptr;
 		EntityTable* table = nullptr;	// -> Owned table
 		bool empty = false;
 		CompTableCacheListNode* prev = nullptr;
@@ -115,7 +143,7 @@ namespace ECS
 	struct CompTableRecord
 	{
 		CompTableCacheListNode header;
-		EntityTable* table = nullptr;	// -> Owned table
+		U64 compID = 0;
 		I32 column = 0;					// The column of comp in target table
 		I32 count = 0;
 	};
@@ -125,46 +153,30 @@ namespace ECS
 		Hashmap<CompTableCacheListNode*> tableRecordMap; // <TableID, CompTableRecord>
 		CompTableCacheList tables;
 		CompTableCacheList emptyTables;
+
+		CompTableRecord* GetTableRecordFromCache(const EntityTable& table);
+		bool RemoveTableFromCache(EntityTable* table, CompTableCacheListNode* cacheNode);
+		void SetTableCacheState(EntityTable* table, bool isEmpty);
+		void InsertTableIntoCache(const EntityTable* table, CompTableCacheListNode* cacheNode);
+
+	private:
+		void RemoveTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node);
+		void InsertTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node);
 	};
 
-	// EntityID <-> EntityInfo
-	struct EntityInfo
+	struct CompRecord
 	{
-		EntityTable* table = nullptr;
-		I32 row = 0;
-	};
-
-	struct ComponentRecord
-	{
-		EntityTableCache cache;	// Record all columns and tablePool which used this comp  
-		Hashmap<EntityTable*> addRefs;
-		Hashmap<EntityTable*> removeRefs;
+		EntityTableCache cache;
 		U64 recordID;
 	};
 
-	struct EntityInternalInfo
-	{
-		EntityTable* table = nullptr;
-		I32 row = 0;
-		EntityInfo* entityInfo = nullptr;
-	};
-
-	enum class EntityTableEventType
-	{
-		Invalid,
-		ComponentTypeInfo
-	};
-
-	struct EntityTableEvent
-	{
-		EntityTableEventType type = EntityTableEventType::Invalid;
-		EntityID compID = INVALID_ENTITY;
-	};
+	///////////////////////////////////////////////////////////////
+	// Query
 
 	struct QueryItemIter
 	{
 		QueryItem currentItem;
-		ComponentRecord* compRecord;
+		CompRecord* compRecord;
 		CompTableCacheListIter tableCacheIter;
 		EntityTable* table;
 		I32 curMatch;
@@ -229,6 +241,13 @@ namespace ECS
 	//// EntityTable
 	////////////////////////////////////////////////////////////////////////////////
 
+	struct ComponentColumnData
+	{
+		Util::StorageVector data;    // Column element data
+		I64 size = 0;                // Column element size
+		I64 alignment = 0;           // Column element alignment
+	};
+
 	// Archetype table for entity, archtype is a set of componentIDs
 	struct EntityTable
 	{
@@ -236,7 +255,7 @@ namespace ECS
 		WorldImpl* world = nullptr;
 		U64 tableID = 0;
 		EntityType type;
-		EntityGraphNode graphNode;
+		TableGraphNode graphNode;
 		bool isInitialized = false;
 		U32 flags = 0;
 		I32 refCount = 0;
@@ -251,20 +270,22 @@ namespace ECS
 		std::vector<ComponentColumnData> storageColumns; // Comp1,         Comp2,         Comp3
 		std::vector<ComponentTypeInfo*> compTypeInfos;   // CompTypeInfo1, CompTypeInfo2, CompTypeInfo3
 	
+		std::vector<CompTableRecord> tableRecords;
+
 		bool InitTable(WorldImpl* world_);
 		void Claim();
 		void Flush();
 		void Release();
 		void Free();
 		void FiniData(bool updateEntity, bool deleted);
-		EntityGraphEdge* FindOrCreateEdge(EntityGraphEdges& egdes, EntityID compID);
-		EntityGraphEdge* FindEdge(EntityGraphEdges& egdes, EntityID compID);
-		void ClearEdge(EntityID compID, bool isAdded);
 		void DeleteEntity(U32 index, bool destruct);
 		void RemoveColumnLast();
 		void RemoveColumn(U32 index);
 		void GrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
 		U32  AppendNewEntity(EntityID entity, EntityInfo* info, bool construct);
+		void RegisterTableRecords();
+		void UnregisterTableRecords();
+		bool RegisterComponentRecord(EntityID compID, I32 column, I32 count, CompTableRecord& tableRecord);
 		size_t Count()const;
 	};
 
@@ -275,7 +296,7 @@ namespace ECS
 	struct InfoComponent
 	{
 		COMPONENT(InfoComponent)
-			size_t size = 0;
+		size_t size = 0;
 		size_t algnment = 0;
 	};
 
@@ -317,8 +338,8 @@ namespace ECS
 		Hashmap<EntityTable*> tableTypeHashMap;
 
 		// Component
-		Hashmap<ComponentRecord*> compRecordMap;
-		Util::SparseArray<ComponentRecord> compRecordPool;
+		Hashmap<CompRecord*> compRecordMap;
+		Util::SparseArray<CompRecord> compRecordPool;
 		Util::SparseArray<ComponentTypeInfo> compTypePool;
 
 		// System
@@ -448,11 +469,11 @@ namespace ECS
 			if (compID != INVALID_ENTITY && table->storageTable == nullptr)
 				assert(0);
 
-			ComponentRecord* compRecord = GetComponentRecord(compID);
+			CompRecord* compRecord = GetComponentRecord(compID);
 			if (compRecord == nullptr)
 				return nullptr;
 
-			CompTableRecord* tableRecord = GetTableRecordFromCache(&compRecord->cache, *table->storageTable);
+			CompTableRecord* tableRecord = compRecord->cache.GetTableRecordFromCache(*table->storageTable);
 			if (tableRecord == nullptr)
 				assert(0);
 
@@ -705,7 +726,7 @@ namespace ECS
 					QueryItem& item = iter.items[i];
 					EntityID compID = item.compID;
 
-					ComponentRecord* compRecord = GetComponentRecord(compID);
+					CompRecord* compRecord = GetComponentRecord(compID);
 					if (compRecord == nullptr)
 						return -2;
 
@@ -737,11 +758,11 @@ namespace ECS
 
 		bool QueryCheckItemMatchTableType(EntityTable* table, QueryItem& item, EntityID* outID, I32* outColumn)
 		{
-			ComponentRecord* compRecord = GetComponentRecord(item.compID);
+			CompRecord* compRecord = GetComponentRecord(item.compID);
 			if (compRecord == nullptr)
 				return false;
 
-			CompTableRecord* compTableRecord = GetTableRecordFromCache(&compRecord->cache, *table);
+			CompTableRecord* compTableRecord = compRecord->cache.GetTableRecordFromCache(*table);
 			if (compTableRecord == nullptr)
 				return false;
 
@@ -867,7 +888,7 @@ namespace ECS
 				if (tableRecord == nullptr)
 					return false;
 
-				itemIter->table = tableRecord->table;
+				itemIter->table = tableRecord->header.table;
 				itemIter->curMatch = 0;
 				itemIter->matchCount = tableRecord->count;
 				itemIter->column = tableRecord->column;
@@ -950,28 +971,23 @@ namespace ECS
 			return true;
 		}
 		
-		ComponentRecord* EnsureCompRecord(EntityID id)
+		CompRecord* EnsureCompRecord(EntityID id)
 		{
 			auto it = compRecordMap.find(StripGeneration(id));
 			if (it != compRecordMap.end())
 				return it->second;
 
-			ComponentRecord* ret = compRecordPool.Requset();
+			CompRecord* ret = compRecordPool.Requset();
 			ret->recordID = compRecordPool.GetLastID();
 			compRecordMap[StripGeneration(id)] = ret;
 			return ret;
 		}
 
-		void RemoveCompRecord(EntityID id, ComponentRecord* compRecord)
+		void RemoveCompRecord(EntityID id, CompRecord* compRecord)
 		{
-			ComponentRecord record = *compRecord;
+			CompRecord record = *compRecord;
 			compRecordPool.Remove(compRecord->recordID);
 			compRecordMap.erase(StripGeneration(id));
-
-			for (auto kvp : record.addRefs)
-				kvp.second->ClearEdge(id, true);
-			for (auto kvp : record.removeRefs)
-				kvp.second->ClearEdge(id, false);
 		}
 
 		bool CheckEntityTypeHasComponent(EntityType& entityType, EntityID compID)
@@ -984,7 +1000,7 @@ namespace ECS
 			return false;
 		}
 
-		bool MergeIDToEntityType(EntityType& entityType, EntityID compID)
+		bool MergeEntityType(EntityType& entityType, EntityID compID)
 		{
 			for (auto it = entityType.begin(); it != entityType.end(); it++)
 			{
@@ -1002,7 +1018,7 @@ namespace ECS
 			return true;
 		}
 
-		ComponentRecord* GetComponentRecord(EntityID id)
+		CompRecord* GetComponentRecord(EntityID id)
 		{
 			auto it = compRecordMap.find(StripGeneration(id));
 			if (it == compRecordMap.end())
@@ -1284,36 +1300,27 @@ namespace ECS
 			return CreateNewTable(compIDs);
 		}
 
-		EntityTable* FindOrCreateTableWithID(EntityTable* node, EntityID compID, EntityGraphEdge* edge)
+		EntityTable* FindOrCreateTableWithID(EntityTable* parent, EntityID compID, TableGraphEdge* edge)
 		{
-			assert(node != nullptr);
-
-			// Merge current EntityType and compID to a new EntityType
-			EntityType entityType = node->type;
-			if (!MergeIDToEntityType(entityType, compID))
-			{
-				assert(0);	// Debug
-				return nullptr;
-			}
+			EntityType entityType = parent->type;
+			if (!MergeEntityType(entityType, compID))
+				return parent;
 
 			if (entityType.empty())
 				return &root;
 
+			// Find exsiting tables
 			auto it = tableTypeHashMap.find(EntityTypeHash(entityType));
 			if (it != tableTypeHashMap.end())
 				return it->second;
 
-			auto ret = CreateNewTable(entityType);
-			assert(ret);
+			EntityTable* newTable = CreateNewTable(entityType);
+			assert(newTable);
 
-			// Compute table diff (Call PopulateTableDiff to get all diffs)
-			ComputeTableDiff(node, ret, edge);
+			// Connect parent with new table 
+			AddTableGraphEdge(edge, compID, parent, newTable);
 
-			// Add table ref
-			if (node != ret)
-				TableRegisterAddRef(node, compID);
-
-			return ret;
+			return newTable;
 		}
 
 		EntityTable* TableAppend(EntityTable* table, EntityID compID, EntityTableDiff& diff)
@@ -1330,16 +1337,16 @@ namespace ECS
 			assert(compID != 0);
 
 			EntityTable* node = table != nullptr ? table : &root;
-			EntityGraphEdge* edge = node->FindOrCreateEdge(node->graphNode.add, compID);
-			assert(edge != nullptr);
-			if (edge->next == nullptr)
+			TableGraphEdge* edge = EnsureTableGraphEdge(node->graphNode.add, compID);
+			EntityTable* ret = edge->to;
+			if (ret == nullptr)
 			{
-				edge->next = FindOrCreateTableWithID(node, compID, edge);
-				assert(edge->next != nullptr);
+				ret = FindOrCreateTableWithID(node, compID, edge);
+				assert(ret != nullptr);
 			}
 
-			PopulateTableDiff(node, edge, compID, INVALID_ENTITY, diff);
-			return edge->next;
+			PopulateTableDiff(edge, compID, INVALID_ENTITY, diff);
+			return ret;
 		}
 
 		void SetTableEmpty(EntityTable* table)
@@ -1349,120 +1356,13 @@ namespace ECS
 			(*tablePtr) = table;
 		}
 
-		void AppendTableDiff(EntityTableDiff& dst, EntityTableDiff& src)
-		{
-			dst.added.insert(dst.added.end(), src.added.begin(), src.added.end());
-			dst.removed.insert(dst.removed.end(), src.removed.begin(), src.removed.end());
-		}
-
-		void ComputeTableDiff(EntityTable* t1, EntityTable* t2, EntityGraphEdge* edge)
-		{
-			if (t1 == t2)
-				return;
-
-			// Calculate addedCount and removedCount
-			U32 addedCount = 0;
-			U32 removedCount = 0;
-			bool trivialEdge = true;
-			U32 srcNumColumns = (U32)t1->storageType.size();
-			U32 dstNumColumns = (U32)t2->storageType.size();
-			U32 srcColumnIndex, dstColumnIndex;
-			for (srcColumnIndex = 0, dstColumnIndex = 0; (srcColumnIndex < srcNumColumns) && (dstColumnIndex < dstNumColumns); )
-			{
-				EntityID srcComponentID = t1->storageType[srcColumnIndex];
-				EntityID dstComponentID = t2->storageType[dstColumnIndex];
-				if (srcComponentID < dstComponentID)
-				{
-					removedCount++;
-					trivialEdge = false;
-				}
-				else if (srcComponentID > dstComponentID)
-				{
-					addedCount++;
-					trivialEdge = false;
-				}
-
-				srcColumnIndex += srcComponentID <= dstComponentID;
-				dstColumnIndex += dstComponentID <= srcComponentID;
-			}
-
-			addedCount += dstNumColumns - dstColumnIndex;
-			removedCount += srcNumColumns - srcColumnIndex;
-
-			trivialEdge &= (addedCount + removedCount) < 1;
-			if (trivialEdge)
-			{
-				edge->diffIndex = -1;
-				return;
-			}
-
-			// Create a new TableDiff
-			EntityTableDiff& diff = t1->graphNode.diffs.emplace_back();
-			edge->diffIndex = (I32)t1->graphNode.diffs.size();
-			if (addedCount > 0)
-				diff.added.reserve(addedCount);
-			if (removedCount > 0)
-				diff.removed.reserve(removedCount);
-
-			for (srcColumnIndex = 0, dstColumnIndex = 0; (srcColumnIndex < srcNumColumns) && (dstColumnIndex < dstNumColumns); )
-			{
-				EntityID srcComponentID = t1->storageType[srcColumnIndex];
-				EntityID dstComponentID = t2->storageType[dstColumnIndex];
-				if (srcComponentID < dstComponentID)
-					diff.removed.push_back(srcComponentID);
-				else if (srcComponentID > dstComponentID)
-					diff.added.push_back(dstComponentID);
-
-				srcColumnIndex += srcComponentID <= dstComponentID;
-				dstColumnIndex += dstComponentID <= srcComponentID;
-			}
-
-			for (; srcColumnIndex < srcNumColumns; srcColumnIndex++)
-				diff.removed.push_back(t1->storageType[srcColumnIndex]);
-			for (; dstColumnIndex < dstNumColumns; dstColumnIndex++)
-				diff.added.push_back(t2->storageType[dstColumnIndex]);
-
-			assert(diff.added.size() == addedCount);
-			assert(diff.removed.size() == removedCount);
-		}
-
-		void PopulateTableDiff(EntityTable* table, EntityGraphEdge* edge, EntityID addID, EntityID removeID, EntityTableDiff& diff)
-		{
-			assert(table != nullptr);
-			assert(edge != nullptr);
-			if (edge->diffIndex > 0)
-			{
-				diff = table->graphNode.diffs[edge->diffIndex - 1];
-			}
-			else
-			{
-				if (addID != INVALID_ENTITY)
-					diff.added.push_back(addID);
-
-				if (removeID != INVALID_ENTITY)
-					diff.removed.push_back(removeID);
-			}
-		}
-
 		CompTableRecord* GetTableRecord(EntityTable* table, EntityID compID)
 		{
-			ComponentRecord* compRecord = GetComponentRecord(compID);
+			CompRecord* compRecord = GetComponentRecord(compID);
 			if (compRecord == nullptr)
 				return nullptr;
 
-			return GetTableRecordFromCache(&compRecord->cache, *table);
-		}
-
-		void TableRegisterAddRef(EntityTable* table, EntityID id)
-		{
-			ComponentRecord* compRecord = EnsureCompRecord(id);
-			assert(compRecord != nullptr);
-			compRecord->addRefs[id] = table;
-		}
-
-		void TableRegisterRemoveRef(EntityTable* table, EntityID id)
-		{
-			// TODO...
+			return compRecord->cache.GetTableRecordFromCache(*table);
 		}
 		
 		void CommitTables(EntityID entity, EntityInternalInfo* info, EntityTable* dstTable, EntityTableDiff& diff, bool construct)
@@ -1629,104 +1529,218 @@ namespace ECS
 			pendingTables.Clear();	// TODO
 		}
 
-		////////////////////////////////////////////////////////////////////////////////
-		//// TableCache
-		////////////////////////////////////////////////////////////////////////////////
-		CompTableRecord* GetTableRecordFromCache(EntityTableCache* cache, const EntityTable& table)
+		void ComputeTableDiff(EntityTable* t1, EntityTable* t2, TableGraphEdge* edge)
 		{
-			auto it = cache->tableRecordMap.find(table.tableID);
-			if (it == cache->tableRecordMap.end())
-				return nullptr;
-			return reinterpret_cast<CompTableRecord*>(it->second);
-		}
-
-		CompTableRecord* InsertTableIntoCache(EntityTableCache* cache, const EntityTable* table)
-		{
-			assert(cache != nullptr);
-			assert(table != nullptr);
-			bool empty = table->entities.empty();
-			CompTableCacheListNode* node = static_cast<CompTableCacheListNode*>(malloc(sizeof(CompTableRecord)));
-			assert(node != nullptr);
-			node->table = (EntityTable*)(table);
-			node->empty = empty;
-
-			cache->tableRecordMap[table->tableID] = node;
-			InsertTableCacheNode(empty ? cache->emptyTables : cache->tables, node);
-			return reinterpret_cast<CompTableRecord*>(node);
-		}
-
-		bool RemoveTableFromCache(EntityTableCache* cache, EntityTable* table)
-		{
-			auto it = cache->tableRecordMap.find(table->tableID);
-			if (it == cache->tableRecordMap.end())
-				return false;
-
-			CompTableCacheListNode* node = it->second;
-			if (node == nullptr)
-				return false;
-
-			RemoveTableCacheNode(node->empty ? cache->emptyTables : cache->tables, node);
-			free(node);
-
-			cache->tableRecordMap.erase(table->tableID);
-			return true;
-		}
-
-		void InsertTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node)
-		{
-			CompTableCacheListNode* last = list.last;
-			list.last = node;
-			list.count++;
-			if (list.count == 1)
-				list.first = node;
-
-			node->next = nullptr;
-			node->prev = last;
-
-			if (last != nullptr)
-				last->next = node;
-		}
-
-		void RemoveTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node)
-		{
-			if (node->prev != nullptr)
-				node->prev->next = node->next;
-			if (node->next != nullptr)
-				node->next->prev = node->prev;
-
-			list.count--;
-
-			if (node == list.first)
-				list.first = node->next;
-			if (node == list.last)
-				list.last = node->prev;
-		}
-
-		void SetTableCacheState(EntityTableCache* cache, EntityTable* table, bool isEmpty)
-		{
-			auto it = cache->tableRecordMap.find(table->tableID);
-			if (it == cache->tableRecordMap.end())
+			if (t1 == t2)
 				return;
 
-			CompTableCacheListNode* node = it->second;
-			if (node == nullptr)
-				return;
-		
-			if (node->empty == isEmpty)
-				return;
-
-			node->empty = isEmpty;
-
-			if (isEmpty)
+			// Calculate addedCount and removedCount
+			U32 addedCount = 0;
+			U32 removedCount = 0;
+			bool trivialEdge = true;
+			U32 srcNumColumns = (U32)t1->storageType.size();
+			U32 dstNumColumns = (U32)t2->storageType.size();
+			U32 srcColumnIndex, dstColumnIndex;
+			for (srcColumnIndex = 0, dstColumnIndex = 0; (srcColumnIndex < srcNumColumns) && (dstColumnIndex < dstNumColumns); )
 			{
-				RemoveTableCacheNode(cache->tables, node);
-				InsertTableCacheNode(cache->emptyTables, node);
+				EntityID srcComponentID = t1->storageType[srcColumnIndex];
+				EntityID dstComponentID = t2->storageType[dstColumnIndex];
+				if (srcComponentID < dstComponentID)
+				{
+					removedCount++;
+					trivialEdge = false;
+				}
+				else if (srcComponentID > dstComponentID)
+				{
+					addedCount++;
+					trivialEdge = false;
+				}
+
+				srcColumnIndex += srcComponentID <= dstComponentID;
+				dstColumnIndex += dstComponentID <= srcComponentID;
+			}
+
+			addedCount += dstNumColumns - dstColumnIndex;
+			removedCount += srcNumColumns - srcColumnIndex;
+
+			trivialEdge &= (addedCount + removedCount) < 1;
+			if (trivialEdge)
+			{
+				edge->diff = &EMPTY_TABLE_DIFF;
+				return;
+			}
+
+			// Create a new TableDiff
+			EntityTableDiff* diff = Util::NewObject<EntityTableDiff>();
+			edge->diff = diff;
+			if (addedCount > 0)
+				diff->added.reserve(addedCount);
+			if (removedCount > 0)
+				diff->removed.reserve(removedCount);
+
+			for (srcColumnIndex = 0, dstColumnIndex = 0; (srcColumnIndex < srcNumColumns) && (dstColumnIndex < dstNumColumns); )
+			{
+				EntityID srcComponentID = t1->storageType[srcColumnIndex];
+				EntityID dstComponentID = t2->storageType[dstColumnIndex];
+				if (srcComponentID < dstComponentID)
+					diff->removed.push_back(srcComponentID);
+				else if (srcComponentID > dstComponentID)
+					diff->added.push_back(dstComponentID);
+
+				srcColumnIndex += srcComponentID <= dstComponentID;
+				dstColumnIndex += dstComponentID <= srcComponentID;
+			}
+
+			for (; srcColumnIndex < srcNumColumns; srcColumnIndex++)
+				diff->removed.push_back(t1->storageType[srcColumnIndex]);
+			for (; dstColumnIndex < dstNumColumns; dstColumnIndex++)
+				diff->added.push_back(t2->storageType[dstColumnIndex]);
+
+			assert(diff->added.size() == addedCount);
+			assert(diff->removed.size() == removedCount);
+		}
+
+		void AddTableGraphEdge(TableGraphEdge* edge, EntityID compID, EntityTable* from, EntityTable* to)
+		{
+			edge->from = from;
+			edge->to = to;
+			edge->compID = compID;
+
+			// TODO
+
+			if (from != to)
+			{
+				TableGraphEdgeListNode* toNode = &to->graphNode.incomingEdges;
+				TableGraphEdgeListNode* next = toNode->next;
+				toNode->next = &edge->listNode;
+				edge->listNode.prev = toNode;
+				edge->listNode.next = next;
+				if (next != nullptr)
+					next->prev = &edge->listNode;
+
+				// Compute table diff (Call PopulateTableDiff to get all diffs)
+				ComputeTableDiff(from, to, edge);
+			}
+		}
+
+		void AppendTableDiff(EntityTableDiff& dst, EntityTableDiff& src)
+		{
+			dst.added.insert(dst.added.end(), src.added.begin(), src.added.end());
+			dst.removed.insert(dst.removed.end(), src.removed.begin(), src.removed.end());
+		}
+		
+		void PopulateTableDiff(TableGraphEdge* edge, EntityID addID, EntityID removeID, EntityTableDiff& outDiff)
+		{
+			assert(edge != nullptr);
+			EntityTableDiff* diff = edge->diff;
+			if (diff && diff != (&EMPTY_TABLE_DIFF))
+			{
+				assert(addID == INVALID_ENTITY);
+				assert(removeID == INVALID_ENTITY);
+				outDiff = *diff;
 			}
 			else
 			{
-				RemoveTableCacheNode(cache->emptyTables, node);
-				InsertTableCacheNode(cache->tables, node);
+				if (addID != INVALID_ENTITY)
+					outDiff.added.push_back(addID);
+
+				if (removeID != INVALID_ENTITY)
+					outDiff.removed.push_back(removeID);
 			}
+		}
+
+		////////////////////////////////////////////////////////////////////////////////
+		//// Table graph
+		////////////////////////////////////////////////////////////////////////////////
+
+		TableGraphEdge* EnsureTableGraphEdge(TableGraphEdges& egdes, EntityID compID)
+		{
+			TableGraphEdge* edge = nullptr;
+			if (compID < HI_COMPONENT_ID)
+			{
+				edge = &egdes.loEdges[compID];
+			}
+			else
+			{
+				auto it = egdes.hiEdges.find(compID);
+				if (it != egdes.hiEdges.end())
+				{
+					edge = &it->second;
+				}
+				else
+				{
+					auto it = egdes.hiEdges.emplace(compID, TableGraphEdge());
+					edge = &it.first->second;
+				}
+			}
+			return edge;
+		}
+
+		TableGraphEdge* FindTableGraphEdge(TableGraphEdges& egdes, EntityID compID)
+		{
+			TableGraphEdge* edge = nullptr;
+			if (compID < HI_COMPONENT_ID)
+			{
+				edge = &egdes.loEdges[compID];
+			}
+			else
+			{
+				auto it = egdes.hiEdges.find(compID);
+				if (it != egdes.hiEdges.end())
+					edge = &it->second;
+			}
+			return edge;
+		}
+
+		void ClearTableGraphEdges(EntityTable* table)
+		{
+			TableGraphNode& graphNode = table->graphNode;
+
+			// Remove outgoing edges
+			for (auto& kvp : graphNode.add.hiEdges)
+				DisconnectEdge(kvp.second, kvp.first);
+
+
+			for (auto& kvp : graphNode.remove.hiEdges)
+				DisconnectEdge(kvp.second, kvp.first);
+
+			// Remove incoming edges
+			TableGraphEdgeListNode* node = &graphNode.incomingEdges;
+			while (node != nullptr)
+			{
+				TableGraphEdge* edge = (TableGraphEdge*)node;
+				DisconnectEdge(*edge, edge->compID);
+				if (edge->from != nullptr)
+				{
+					edge->from->graphNode.add.hiEdges.erase(edge->compID);
+					edge->from->graphNode.remove.hiEdges.erase(edge->compID);
+				}
+				node = node->next;
+			}
+
+			graphNode.add.hiEdges.clear();
+			graphNode.remove.hiEdges.clear();
+		}
+
+		void DisconnectEdge(TableGraphEdge& edge, EntityID compID)
+		{
+			assert(edge.compID == compID);
+
+			// Remove from list of Edges
+			TableGraphEdgeListNode* prev = edge.listNode.prev;
+			TableGraphEdgeListNode* next = edge.listNode.next;
+			if (prev)
+				prev->next = next;
+			if (next)
+				next->prev = prev;
+
+			// Free table diff
+			EntityTableDiff* diff = edge.diff;
+			if (diff != nullptr && diff != &EMPTY_TABLE_DIFF)
+				Util::DeleteObject(diff);
+
+			edge.from = nullptr;
+			edge.to = nullptr;
 		}
 
 		////////////////////////////////////////////////////////////////////////////////
@@ -1782,6 +1796,107 @@ namespace ECS
 		}
 	};
 
+
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// TableCache
+	////////////////////////////////////////////////////////////////////////////////
+	CompTableRecord* EntityTableCache::GetTableRecordFromCache(const EntityTable& table)
+	{
+		auto it = tableRecordMap.find(table.tableID);
+		if (it == tableRecordMap.end())
+			return nullptr;
+		return reinterpret_cast<CompTableRecord*>(it->second);
+	}
+
+	void EntityTableCache::InsertTableIntoCache(const EntityTable* table, CompTableCacheListNode* cacheNode)
+	{
+		assert(table != nullptr);
+		assert(cacheNode != nullptr);
+
+		bool empty = table->entities.empty();
+		cacheNode->cache = this;
+		cacheNode->table = (EntityTable*)(table);
+		cacheNode->empty = empty;
+
+		tableRecordMap[table->tableID] = cacheNode;
+		InsertTableCacheNode(empty ? emptyTables : tables, cacheNode);
+	}
+
+	bool EntityTableCache::RemoveTableFromCache(EntityTable* table, CompTableCacheListNode* cacheNode)
+	{
+		auto it = tableRecordMap.find(table->tableID);
+		if (it == tableRecordMap.end())
+			return false;
+
+		CompTableCacheListNode* node = it->second;
+		if (node == nullptr)
+			return false;
+
+		RemoveTableCacheNode(node->empty ? emptyTables : tables, node);
+		free(node);
+
+		tableRecordMap.erase(table->tableID);
+		return true;
+	}
+
+	void EntityTableCache::InsertTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node)
+	{
+		CompTableCacheListNode* last = list.last;
+		list.last = node;
+		list.count++;
+		if (list.count == 1)
+			list.first = node;
+
+		node->next = nullptr;
+		node->prev = last;
+
+		if (last != nullptr)
+			last->next = node;
+	}
+
+	void EntityTableCache::RemoveTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node)
+	{
+		if (node->prev != nullptr)
+			node->prev->next = node->next;
+		if (node->next != nullptr)
+			node->next->prev = node->prev;
+
+		list.count--;
+
+		if (node == list.first)
+			list.first = node->next;
+		if (node == list.last)
+			list.last = node->prev;
+	}
+
+	void EntityTableCache::SetTableCacheState(EntityTable* table, bool isEmpty)
+	{
+		auto it = tableRecordMap.find(table->tableID);
+		if (it == tableRecordMap.end())
+			return;
+
+		CompTableCacheListNode* node = it->second;
+		if (node == nullptr)
+			return;
+
+		if (node->empty == isEmpty)
+			return;
+
+		node->empty = isEmpty;
+
+		if (isEmpty)
+		{
+			RemoveTableCacheNode(tables, node);
+			InsertTableCacheNode(emptyTables, node);
+		}
+		else
+		{
+			RemoveTableCacheNode(emptyTables, node);
+			InsertTableCacheNode(tables, node);
+		}
+	}
+
 	////////////////////////////////////////////////////////////////////////////////
 	//// EntityTableImpl
 	////////////////////////////////////////////////////////////////////////////////
@@ -1796,8 +1911,8 @@ namespace ECS
 		for (auto& id : type)
 			world->EnsureEntity(id);
 
-		//  Register table
-		ForEachEntityID(world, this, RegisterTable);
+		//  Register table records
+		RegisterTableRecords();
 
 		// Init storage table
 		std::vector<EntityID> storageIDs;
@@ -1930,13 +2045,16 @@ namespace ECS
 		assert(isRoot || this->tableID != 0);
 		assert(refCount == 0);
 
-		// Finit data
+		// Fini data
 		FiniData(true, true);
+		
+		// Clear all graph edges
+		world->ClearTableGraphEdges(this);
 
 		if (!isRoot)
 		{
 			//  Unregister table
-			ForEachEntityID(world, this, UnregisterTable);
+			UnregisterTableRecords();
 
 			// Remove from hashMap
 			world->tableTypeHashMap.erase(EntityTypeHash(type));
@@ -1990,60 +2108,6 @@ namespace ECS
 
 		entities.clear();
 		entityInfos.clear();
-	}
-
-	EntityGraphEdge* EntityTable::FindOrCreateEdge(EntityGraphEdges& egdes, EntityID compID)
-	{
-		EntityGraphEdge* edge = nullptr;
-		if (compID < HI_COMPONENT_ID)
-		{
-			edge = &egdes.loEdges[compID];
-		}
-		else
-		{
-			auto it = egdes.hiEdges.find(compID);
-			if (it != egdes.hiEdges.end())
-			{
-				edge = &it->second;
-			}
-			else
-			{
-				auto it = egdes.hiEdges.emplace(compID, EntityGraphEdge());
-				edge = &it.first->second;
-			}
-		}
-		return edge;
-	}
-
-	EntityGraphEdge* EntityTable::FindEdge(EntityGraphEdges& egdes, EntityID compID)
-	{
-		EntityGraphEdge* edge = nullptr;
-		if (compID < HI_COMPONENT_ID)
-		{
-			edge = &egdes.loEdges[compID];
-		}
-		else
-		{
-			auto it = egdes.hiEdges.find(compID);
-			if (it != egdes.hiEdges.end())
-				edge = &it->second;
-		}
-		return edge;
-	}
-
-	void EntityTable::ClearEdge(EntityID compID, bool isAdded)
-	{
-		EntityGraphEdge* edge = nullptr;
-		if (isAdded)
-			edge = FindEdge(graphNode.add, compID);
-		else
-			edge = FindEdge(graphNode.remove, compID);
-		
-		if (edge != nullptr)
-		{
-			edge->next = nullptr;
-			edge->diffIndex = 0;
-		}
 	}
 
 	void EntityTable::DeleteEntity(U32 index, bool destruct)
@@ -2177,59 +2241,73 @@ namespace ECS
 		return index;
 	}
 
+	void EntityTable::RegisterTableRecords()
+	{
+		if (type.empty())
+			return;
+
+		U32 recordCount = 0;
+		for (U32 i = 0; i < type.size(); i++)
+		{
+			EntityID compId = type[i];
+			EntityID realCompID = compId & ECS_COMPONENT_MASK;
+			// TODO: check ECS_ROLE_MASK
+
+			if (realCompID != INVALID_ENTITY)
+				recordCount++;
+		}
+
+		tableRecords.resize(recordCount);
+
+		for (U32 i = 0; i < type.size(); i++)
+			RegisterComponentRecord(type[i], i, 1, tableRecords[i]);
+	}
+
+	void EntityTable::UnregisterTableRecords()
+	{
+		for (size_t i = 0; i < tableRecords.size(); i++)
+		{
+			CompTableRecord* tableRecord = &tableRecords[i];
+			EntityTableCache* cache = tableRecord->header.cache;
+			cache->RemoveTableFromCache(this, &tableRecord->header);
+
+			if (cache->tableRecordMap.empty())
+			{
+				CompRecord* compRecord = reinterpret_cast<CompRecord*>(cache);
+				world->RemoveCompRecord(tableRecord->compID, compRecord);
+			}
+		}
+		tableRecords.clear();
+	}
+
+	bool EntityTable::RegisterComponentRecord(EntityID compID, I32 column, I32 count, CompTableRecord& tableRecord)
+	{
+		compID = StripGeneration(compID);
+		CompRecord* compRecord = world->EnsureCompRecord(compID);
+		assert(compRecord != nullptr);
+		tableRecord.compID = compID;
+		tableRecord.column = column;	// Index for component from entity type
+		tableRecord.count = 1;
+		compRecord->cache.InsertTableIntoCache(this, &tableRecord.header);
+		return true;
+	}
+
 	size_t EntityTable::Count()const
 	{
 		return entities.size();
 	}
 
-	bool RegisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column)
-	{
-		// Create new table record (from compID record cache)
-		ComponentRecord* compRecord = world->EnsureCompRecord(id);
-		assert(compRecord != nullptr);
-
-		// Create table record
-		CompTableRecord* tableRecord = world->GetTableRecordFromCache(&compRecord->cache, *table);
-		if (tableRecord != nullptr)
-		{
-			tableRecord->count++;
-		}
-		else
-		{
-			tableRecord = world->InsertTableIntoCache(&compRecord->cache, table);
-			tableRecord->table = table;
-			tableRecord->column = column;	// Index for component from entity type
-			tableRecord->count = 1;
-		}
-		return true;
-	}
-
-	bool UnregisterTable(WorldImpl* world, EntityTable* table, EntityID id, I32 column)
-	{
-		ComponentRecord* compRecord = world->GetComponentRecord(id);
-		if (compRecord == nullptr)
-			return false;
-
-		EntityTableCache& cache = compRecord->cache;
-		auto it = compRecord->cache.tableRecordMap.find(table->tableID);
-		if (it == compRecord->cache.tableRecordMap.end())
-			return false;
-
-		if (world->RemoveTableFromCache(&cache, table))
-		{
-			// Remove the component id
-			world->RemoveCompRecord(id, compRecord);
-		}
-		return true;
-	}
+	////////////////////////////////////////////////////////////////////////////////
+	//// Static function impl
+	////////////////////////////////////////////////////////////////////////////////
 
 	bool FlushTableState(WorldImpl* world, EntityTable* table, EntityID id, I32 column)
 	{
-		ComponentRecord* compRecord = world->GetComponentRecord(id);
+		CompRecord* compRecord = world->GetComponentRecord(id);
 		if (compRecord == nullptr)
 			return false;
 
-		world->SetTableCacheState(&compRecord->cache, table, table->Count() == 0);
+		compRecord->cache.SetTableCacheState(table, table->Count() == 0);
 		return true;
 	}
 
