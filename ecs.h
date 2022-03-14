@@ -26,8 +26,6 @@ namespace ECS
 
 	static const EntityID INVALID_ENTITY = 0;
 	static const EntityType EMPTY_ENTITY_TYPE = EntityType();
-
-	static const EntityID HI_COMPONENT_ID = 256;
 	static const size_t MAX_QUERY_ITEM_COUNT = 16;
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -171,6 +169,7 @@ public:                                                   \
 		static ECS_UNIQUE_PTR<World> Create();
 
 		virtual const EntityBuilder& CreateEntity(const char* name) = 0;
+		virtual const EntityBuilder& CreatePrefab(const char* name) = 0;
 		virtual EntityID CreateEntityID(const char* name) = 0;
 		virtual EntityID FindEntityIDByName(const char* name) = 0;
 		virtual EntityID IsEntityAlive(EntityID entity)const = 0;

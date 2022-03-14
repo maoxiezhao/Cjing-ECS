@@ -14,8 +14,9 @@ namespace ECS
 #define ECS_GENERATION_MASK           (0xFFFFull << 32)
 #define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
 
-	const U32 FirstUserComponentID = 32;
-	const U32 FirstUserEntityID = HI_COMPONENT_ID + 128;
+	const EntityID HI_COMPONENT_ID = 256;
+	const U32 FirstUserComponentID = 32; // [32 - 256] user components	
+	const U32 FirstUserEntityID = HI_COMPONENT_ID + 128; // [256 - 384] build-in tags
 	const size_t QUERY_ITEM_SMALL_CACHE_SIZE = 4;
 
 	inline U64 EntityTypeHash(const EntityType& entityType)
@@ -41,6 +42,8 @@ namespace ECS
 	////////////////////////////////////////////////////////////////////////////////
 	//// Definition
 	////////////////////////////////////////////////////////////////////////////////
+
+	const EntityID EcsTagPrefab = HI_COMPONENT_ID + 0;
 
 	struct EntityTableDiff
 	{
@@ -240,6 +243,11 @@ namespace ECS
 	//// EntityTable
 	////////////////////////////////////////////////////////////////////////////////
 
+	enum TableFlag
+	{
+		TableFlagIsPrefab = 1 << 0,
+	};
+
 	struct ComponentColumnData
 	{
 		Util::StorageVector data;    // Column element data
@@ -271,7 +279,6 @@ namespace ECS
 
 		bool InitTable(WorldImpl* world_);
 		void Claim();
-		void Flush();
 		void Release();
 		void Free();
 		void FiniData(bool updateEntity, bool deleted);
@@ -360,6 +367,7 @@ namespace ECS
 
 			SetupComponentIDs();
 			InitBuildInComponents();
+			InitBuildInTags();
 			InitSystemComponent();
 			RegisterBuildInComponents();
 		}
@@ -400,6 +408,14 @@ namespace ECS
 		const EntityBuilder& CreateEntity(const char* name) override
 		{
 			entityBuilder.entity = CreateEntityID(name);
+			return entityBuilder;
+		}
+
+		const EntityBuilder& CreatePrefab(const char* name) override
+		{
+			EntityID entity = CreateEntityID(name);
+			AddComponent(entity, EcsTagPrefab);
+			entityBuilder.entity = entity;
 			return entityBuilder;
 		}
 
@@ -880,31 +896,42 @@ namespace ECS
 
 			CompTableRecord* tableRecord = nullptr;
 			EntityTable* table = itemIter->table;
-			if (table != nullptr)
+			do
 			{
-				itemIter->curMatch++;
-				if (itemIter->curMatch >= itemIter->matchCount)
+				if (table != nullptr)
 				{
-					table = nullptr;
+					itemIter->curMatch++;
+					if (itemIter->curMatch >= itemIter->matchCount)
+					{
+						table = nullptr;
+					}
+					else
+					{
+						// TODO
+						assert(0);
+					}
 				}
-				else
+
+				if (table == nullptr)
 				{
-					// TODO
-					assert(0);
+					tableRecord = GetNextTable(itemIter);
+					if (tableRecord == nullptr)
+						return false;
+
+					EntityTable* table = tableRecord->header.table;
+					if (table == nullptr)
+						return false;
+
+					if (table->flags & TableFlagIsPrefab)
+						continue;
+
+					itemIter->table = table;
+					itemIter->curMatch = 0;
+					itemIter->matchCount = tableRecord->count;
+					itemIter->column = tableRecord->column;
+					break;
 				}
-			}
-
-			if (table == nullptr)
-			{
-				tableRecord = GetNextTable(itemIter);
-				if (tableRecord == nullptr)
-					return false;
-
-				itemIter->table = tableRecord->header.table;
-				itemIter->curMatch = 0;
-				itemIter->matchCount = tableRecord->count;
-				itemIter->column = tableRecord->column;
-			}
+			}while (true);
 	
 			return true;
 		}
@@ -1129,6 +1156,22 @@ namespace ECS
 			lastID = FirstUserEntityID;
 		}
 
+		void InitBuildInTags()
+		{
+			InfoComponent tagInfo = {};
+			tagInfo.size = 0;
+
+			auto InitTag = [&](EntityID tagID, const char* name)
+			{
+				EntityInfo* entityInfo = entityPool.Ensure(tagID);
+				assert(entityInfo != nullptr);
+
+				SetComponent(tagID, InfoComponent::GetComponentID(), sizeof(InfoComponent), &tagInfo, false);
+				SetEntityName(tagID, name);
+			};
+			InitTag(EcsTagPrefab, "EcsTagPrefab");
+		}
+
 		void InitSystemComponent()
 		{
 			// System is a special build-in component, it build in a independent table.
@@ -1262,6 +1305,8 @@ namespace ECS
 					{
 						if (compTypeInfo->reflectInfo.copy != nullptr)
 							compTypeInfo->reflectInfo.copy(this, &entity, &entity, compTypeInfo->size, 1, ptr, dst);
+						else
+							memcpy(dst, ptr, size);
 					}
 				}
 				else
@@ -1387,6 +1432,11 @@ namespace ECS
 				if (!dstTable->type.empty())
 				{
 					EntityInfo* entityInfo = info->entityInfo;
+					if (entityInfo == nullptr)
+					{
+						entityInfo = entityPool.Ensure(entity);
+						info->entityInfo = entityInfo;
+					}
 					assert(entityInfo != nullptr && entityInfo == entityPool.Get(entity));
 
 					// Add a new entity for dstTable (Just reserve storage)
@@ -2075,6 +2125,15 @@ namespace ECS
 			}
 		}
 
+		// Init table flags
+		for (U32 i = 0; i < storageType.size(); i++)
+		{
+			EntityID compID = storageType[i];
+			if (compID == EcsTagPrefab)
+				flags |= TableFlagPrefab;
+		}
+
+		// Notify event of component type info
 		EntityTableEvent ent = {};
 		ent.type = EntityTableEventType::ComponentTypeInfo;
 		world->NotifyTables(0, ent);
@@ -2085,11 +2144,6 @@ namespace ECS
 	{
 		assert(refCount > 0);
 		refCount++;
-	}
-
-	void EntityTable::Flush()
-	{
-		// TODO
 	}
 
 	void EntityTable::Release()
