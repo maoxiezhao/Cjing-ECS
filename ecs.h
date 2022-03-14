@@ -20,42 +20,15 @@ namespace ECS
 	class Query;
 
 	using EntityID = U64;
-	using EntityIDs = std::vector<EntityID>;
-	using EntityType = std::vector<EntityID>;
+	using EntityIDs = Vector<EntityID>;
+	using EntityType = Vector<EntityID>;
 	using QueryID = U64;
 
 	static const EntityID INVALID_ENTITY = 0;
 	static const EntityType EMPTY_ENTITY_TYPE = EntityType();
 
-	template<typename Value>
-	using Hashmap = std::unordered_map<U64, Value>;
-
 	static const EntityID HI_COMPONENT_ID = 256;
 	static const size_t MAX_QUERY_ITEM_COUNT = 16;
-
-
-#define ECS_MALLOC(n) malloc(n)
-#define ECS_MALLOC_T(T) (T*)malloc(sizeof(T))
-#define ECS_NEW_PLACEMENT(mem, T) new (mem) T()
-#define ECS_FREE(ptr) free(ptr)
-
-	template<typename T, typename... Args>
-	inline T* ECS_NEW_OBJECT(Args&&... args)
-	{
-		return new(malloc(sizeof(T))) T(std::forward<Args>(args)...);
-	}
-
-	template<typename T>
-	inline void ECS_DELETE_OBJECT(T* ptr)
-	{
-		if (ptr != nullptr)
-		{
-			if (!__has_trivial_destructor(T)) {
-				ptr->~T();
-			}
-			free(ptr);
-		}
-	}
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Components
@@ -148,7 +121,7 @@ public:                                                   \
 
 		size_t entityCount = 0;
 		EntityID* entities = nullptr;
-		std::vector<void*> compDatas;
+		Vector<void*> compDatas;
 
 	public:
 		QueryIter();
@@ -195,7 +168,7 @@ public:                                                   \
 		World(const World& obj) = delete;
 		void operator=(const World& obj) = delete;
 
-		static std::unique_ptr<World> Create();
+		static ECS_UNIQUE_PTR<World> Create();
 
 		virtual const EntityBuilder& CreateEntity(const char* name) = 0;
 		virtual EntityID CreateEntityID(const char* name) = 0;
@@ -466,7 +439,7 @@ public:                                                   \
 			using Invoker = typename _::EachInvoker<typename std::decay_t<Func>, Comps...>;
 			QueryIter iter = world->GetQueryIterator(queryID);
 			while (world->QueryIteratorNext(iter))
-				Invoker(std::forward<Func>(func)).Invoke(&iter);
+				Invoker(ECS_FWD(func)).Invoke(&iter);
 		}
 
 	private:
@@ -506,14 +479,14 @@ public:                                                   \
 		EntityID ForEach(Func&& func)
 		{
 			using Invoker = typename _::EachInvoker<typename std::decay_t<Func>, Comps...>;
-			return Build<Invoker>(std::forward<Func>(func));
+			return Build<Invoker>(ECS_FWD(func));
 		}
 
 	private:
 		template<typename Invoker, typename Func>
 		EntityID Build(Func&& func)
 		{
-			Invoker* invoker = ECS_NEW_OBJECT<Invoker>(std::forward<Func>(func));
+			Invoker* invoker = ECS_NEW_OBJECT<Invoker>(ECS_FWD(func));
 			desc.action = Invoker::Run;
 			desc.invoker = invoker;
 			desc.invokerDeleter = reinterpret_cast<InvokerDeleter>(ECS_DELETE_OBJECT<Invoker>);

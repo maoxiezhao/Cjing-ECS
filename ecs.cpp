@@ -188,7 +188,7 @@ namespace ECS
 	{
 		U64 queryID;
 		QueryItem* queryItems;
-		std::vector<QueryItem> queryItemsCache;
+		Vector<QueryItem> queryItemsCache;
 		QueryItem queryItemSmallCache[QUERY_ITEM_SMALL_CACHE_SIZE];
 		I32 itemCount;
 	};
@@ -199,8 +199,8 @@ namespace ECS
 		I32 matchingLeft;
 		I32 pivotItemIndex;
 
-		std::vector<EntityID> ids;
-		std::vector<I32> columns;
+		Vector<EntityID> ids;
+		Vector<I32> columns;
 	};
 
 	QueryIter::QueryIter()
@@ -221,7 +221,7 @@ namespace ECS
 
 	QueryIter::QueryIter(QueryIter&& rhs)noexcept
 	{
-		*this = std::move(rhs);
+		*this = ECS_MOV(rhs);
 	}
 
 	void QueryIter::operator=(QueryIter&& rhs)noexcept
@@ -261,14 +261,14 @@ namespace ECS
 
 		EntityTable* storageTable = nullptr;
 		EntityType storageType;
-		std::vector<I32> typeToStorageMap;
-		std::vector<I32> storageToTypeMap;
+		Vector<I32> typeToStorageMap;
+		Vector<I32> storageToTypeMap;
 
-		std::vector<EntityID> entities;
-		std::vector<EntityInfo*> entityInfos;
-		std::vector<ComponentColumnData> storageColumns; // Comp1,         Comp2,         Comp3
-		std::vector<ComponentTypeInfo*> compTypeInfos;   // CompTypeInfo1, CompTypeInfo2, CompTypeInfo3
-		std::vector<CompTableRecord> tableRecords;       // CompTable1,    CompTable2,    CompTable3
+		Vector<EntityID> entities;
+		Vector<EntityInfo*> entityInfos;
+		Vector<ComponentColumnData> storageColumns; // Comp1,         Comp2,         Comp3
+		Vector<ComponentTypeInfo*> compTypeInfos;   // CompTypeInfo1, CompTypeInfo2, CompTypeInfo3
+		Vector<CompTableRecord> tableRecords;       // CompTable1,    CompTable2,    CompTable3
 
 		bool InitTable(WorldImpl* world_);
 		void Claim();
@@ -279,7 +279,7 @@ namespace ECS
 		void DeleteEntity(U32 index, bool destruct);
 		void RemoveColumnLast();
 		void RemoveColumn(U32 index);
-		void GrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
+		void GrowColumn(Vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
 		U32  AppendNewEntity(EntityID entity, EntityInfo* info, bool construct);
 		void RegisterTableRecords();
 		void UnregisterTableRecords();
@@ -770,7 +770,7 @@ namespace ECS
 			impl.itemIter.tableCacheIter.cur = nullptr;
 			impl.itemIter.tableCacheIter.next = impl.itemIter.compRecord->cache.tables.first;
 
-			return std::move(iter);
+			return ECS_MOV(iter);
 		}
 
 		bool QueryCheckItemMatchTableType(EntityTable* table, QueryItem& item, EntityID* outID, I32* outColumn)
@@ -791,7 +791,7 @@ namespace ECS
 			return true;
 		}
 
-		bool QueryCheckItemsMatchTableType(EntityTable* table, QueryIter& iter, I32 pivotItem, std::vector<EntityID>& ids, std::vector<I32>& columns)
+		bool QueryCheckItemsMatchTableType(EntityTable* table, QueryIter& iter, I32 pivotItem, Vector<EntityID>& ids, Vector<I32>& columns)
 		{
 			// Check current table includes all compsIDs from items
 			for (int i = 0; i < iter.itemCount; i++)
@@ -1082,7 +1082,7 @@ namespace ECS
 			// Create build-in table for build-in components
 			EntityTable* table = nullptr;
 			{
-				std::vector<EntityID> compIDs = {
+				Vector<EntityID> compIDs = {
 					InfoComponent::GetComponentID(),
 					NameComponent::GetComponentID()
 				};
@@ -1304,11 +1304,11 @@ namespace ECS
 				return nullptr;
 			}
 
-			tableTypeHashMap.insert(std::make_pair(EntityTypeHash(entityType), ret));
+			tableTypeHashMap[EntityTypeHash(entityType)] = ret;
 			return ret;
 		}
 
-		EntityTable* FindOrCreateTableWithIDs(const std::vector<EntityID>& compIDs)
+		EntityTable* FindOrCreateTableWithIDs(const Vector<EntityID>& compIDs)
 		{
 			auto it = tableTypeHashMap.find(EntityTypeHash(compIDs));
 			if (it != tableTypeHashMap.end())
@@ -1981,7 +1981,7 @@ namespace ECS
 		RegisterTableRecords();
 
 		// Init storage table
-		std::vector<EntityID> storageIDs;
+		Vector<EntityID> storageIDs;
 		for (U32 i = 0; i < type.size(); i++)
 		{
 			EntityID id = type[i];
@@ -2268,7 +2268,7 @@ namespace ECS
 		}
 	}
 
-	void EntityTable::GrowColumn(std::vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct)
+	void EntityTable::GrowColumn(Vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct)
 	{
 		U32 oldCount = (U32)columnData.data.GetCount();
 		U32 oldCapacity = (U32)columnData.data.GetCapacity();
@@ -2388,8 +2388,8 @@ namespace ECS
 		return ret;
 	}
 
-	std::unique_ptr<World> World::Create()
+	ECS_UNIQUE_PTR<World> World::Create()
 	{
-		return std::make_unique<WorldImpl>();
+		return ECS_MAKE_UNIQUE<WorldImpl>();
 	}
 }
