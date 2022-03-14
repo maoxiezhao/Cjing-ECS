@@ -259,7 +259,6 @@ namespace ECS
 		U32 flags = 0;
 		I32 refCount = 0;
 
-		EntityTable* storageTable = nullptr;
 		EntityType storageType;
 		Vector<I32> typeToStorageMap;
 		Vector<I32> storageToTypeMap;
@@ -482,19 +481,15 @@ namespace ECS
 			if (info == nullptr || info->table == nullptr)
 				return nullptr;
 
-			EntityTable* table = info->table;
-			if (compID != INVALID_ENTITY && table->storageTable == nullptr)
-				assert(0);
-
 			CompRecord* compRecord = GetComponentRecord(compID);
 			if (compRecord == nullptr)
 				return nullptr;
 
-			CompTableRecord* tableRecord = compRecord->cache.GetTableRecordFromCache(*table->storageTable);
+			CompTableRecord* tableRecord = compRecord->cache.GetTableRecordFromCache(*info->table);
 			if (tableRecord == nullptr)
 				assert(0);
 
-			return GetComponentWFromTable(*table, info->row, tableRecord->column);
+			return GetComponentWFromTable(*info->table, info->row, tableRecord->column);
 		}
 
 		bool HasComponentTypeAction(EntityID compID)const override
@@ -1226,7 +1221,7 @@ namespace ECS
 
 				GetEntityInternalInfo(*info, entity);
 				assert(info != nullptr);
-				assert(info->table != nullptr && info->table->storageTable != nullptr);
+				assert(info->table != nullptr);
 				ret = GetComponentFromTable(*info->table, info->row, compID);
 
 				if (isAdded != nullptr)
@@ -2013,7 +2008,6 @@ namespace ECS
 			}
 			else
 			{
-				storageTable = this;
 				storageType = type;
 			}
 		}

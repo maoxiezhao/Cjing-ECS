@@ -76,7 +76,7 @@ public:                                                   \
 		static EntityID componentID;
 		static EntityID ComponentID(World& world);
 		static EntityID RegisterComponent(World& world, const char* name = nullptr);
-		static bool Registered();
+		static bool Registered(World& world);
 	};
 	template<typename C>
 	EntityID ComponentTypeRegister<C>::componentID = INVALID_ENTITY;
@@ -188,6 +188,13 @@ public:                                                   \
 		}
 
 		template<typename C>
+		C* GetSingletonComponent()
+		{
+			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
+			return static_cast<C*>(GetOrCreateComponent(compID, compID));
+		}
+
+		template<typename C>
 		void AddComponent(EntityID entity, const C& comp)
 		{
 			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
@@ -267,7 +274,7 @@ public:                                                   \
 	template<typename C>
 	inline EntityID ComponentTypeRegister<C>::ComponentID(World& world)
 	{
-		if (!Registered())
+		if (!Registered(world))
 		{
 			// Register component
 			componentID = RegisterComponent(world);
@@ -296,9 +303,9 @@ public:                                                   \
 	}
 
 	template<typename C>
-	bool ComponentTypeRegister<C>::Registered()
+	bool ComponentTypeRegister<C>::Registered(World& world)
 	{
-		return componentID != INVALID_ENTITY;
+		return componentID != INVALID_ENTITY && world.IsEntityAlive(componentID);
 	}
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -329,7 +336,6 @@ public:                                                   \
 				return *(static_cast<T*>(ptr) + row);
 			}
 		};
-
 
 		template<typename... Comps>
 		struct CompTuple
