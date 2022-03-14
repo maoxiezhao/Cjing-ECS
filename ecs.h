@@ -33,6 +33,30 @@ namespace ECS
 	static const EntityID HI_COMPONENT_ID = 256;
 	static const size_t MAX_QUERY_ITEM_COUNT = 16;
 
+
+#define ECS_MALLOC(n) malloc(n)
+#define ECS_MALLOC_T(T) (T*)malloc(sizeof(T))
+#define ECS_NEW_PLACEMENT(mem, T) new (mem) T()
+#define ECS_FREE(ptr) free(ptr)
+
+	template<typename T, typename... Args>
+	inline T* ECS_NEW_OBJECT(Args&&... args)
+	{
+		return new(malloc(sizeof(T))) T(std::forward<Args>(args)...);
+	}
+
+	template<typename T>
+	inline void ECS_DELETE_OBJECT(T* ptr)
+	{
+		if (ptr != nullptr)
+		{
+			if (!__has_trivial_destructor(T)) {
+				ptr->~T();
+			}
+			free(ptr);
+		}
+	}
+
 	////////////////////////////////////////////////////////////////////////////////
 	//// Components
 	////////////////////////////////////////////////////////////////////////////////
@@ -489,10 +513,10 @@ public:                                                   \
 		template<typename Invoker, typename Func>
 		EntityID Build(Func&& func)
 		{
-			Invoker* invoker = Util::NewObject<Invoker>(std::forward<Func>(func));
+			Invoker* invoker = ECS_NEW_OBJECT<Invoker>(std::forward<Func>(func));
 			desc.action = Invoker::Run;
 			desc.invoker = invoker;
-			desc.invokerDeleter = reinterpret_cast<InvokerDeleter>(Util::DeleteObject<Invoker>);
+			desc.invokerDeleter = reinterpret_cast<InvokerDeleter>(ECS_DELETE_OBJECT<Invoker>);
 			return world->InitNewSystem(desc);
 		}
 

@@ -38,24 +38,6 @@ namespace Util
 #error "Not supported"
 #endif
 
-	template<typename T, typename... Args>
-	inline T* NewObject(Args&&... args)
-	{
-		return new(malloc(sizeof(T))) T(std::forward<Args>(args)...);
-	}
-
-	template<typename T>
-	inline void DeleteObject(T* ptr)
-	{
-		if (ptr != nullptr)
-		{
-			if (!__has_trivial_destructor(T)) {
-				ptr->~T();
-			}
-			free(ptr);
-		}
-	}
-
 	inline size_t NextPowOf2(size_t n)
 	{
 		n--;

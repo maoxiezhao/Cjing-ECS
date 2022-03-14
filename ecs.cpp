@@ -6,13 +6,13 @@ namespace ECS
 	struct EntityTable;
 	struct EntityInfo;
 
-	// EntityID FFFFffff << 32 | FFFFffff
-	//          generation       realID
-	#define ECS_ENTITY_MASK               (0xFFFFffffull) // 32
-	#define ECS_ROLE_MASK                 (0xFFull << 56)
-    #define ECS_COMPONENT_MASK            (~ECS_ROLE_MASK) // 56
-	#define ECS_GENERATION_MASK           (0xFFFFull << 32)
-	#define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
+// EntityID FFFFffff << 32     |        FFFFffff
+//          generation                   realID
+#define ECS_ENTITY_MASK               (0xFFFFffffull)	// 32
+#define ECS_ROLE_MASK                 (0xFFull << 56)
+#define ECS_COMPONENT_MASK            (~ECS_ROLE_MASK)	// 56
+#define ECS_GENERATION_MASK           (0xFFFFull << 32)
+#define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
 
 	const U32 FirstUserComponentID = 32;
 	const U32 FirstUserEntityID = HI_COMPONENT_ID + 128;
@@ -55,17 +55,17 @@ namespace ECS
 
 	struct TableGraphEdgeListNode
 	{
-		struct TableGraphEdgeListNode* prev;
-		struct TableGraphEdgeListNode* next;
+		struct TableGraphEdgeListNode* prev = nullptr;
+		struct TableGraphEdgeListNode* next = nullptr;
 	};
 
 	struct TableGraphEdge
 	{
 		TableGraphEdgeListNode listNode;
-		EntityTable* from;
-		EntityTable* to;
-		EntityID compID;
-		EntityTableDiff* diff;			// mapping to TableGraphNode diffBuffer
+		EntityTable* from = nullptr;
+		EntityTable* to = nullptr;
+		EntityID compID = INVALID_ENTITY;
+		EntityTableDiff* diff = nullptr; // mapping to TableGraphNode diffBuffer
 	};
 
 	struct TableGraphEdges
@@ -205,9 +205,8 @@ namespace ECS
 
 	QueryIter::QueryIter()
 	{
-		impl = (QueryIterImpl*)malloc(sizeof(QueryIterImpl));
+		impl = ECS_MALLOC_T(QueryIterImpl);
 		assert(impl);
-		memset(impl, 0, sizeof(QueryIterImpl));
 		new (impl) QueryIterImpl();
 	}
 
@@ -216,7 +215,7 @@ namespace ECS
 		if (impl != nullptr)
 		{
 			impl->~QueryIterImpl();
-			free(impl);
+			ECS_FREE(impl);
 		}
 	}
 
@@ -269,8 +268,7 @@ namespace ECS
 		std::vector<EntityInfo*> entityInfos;
 		std::vector<ComponentColumnData> storageColumns; // Comp1,         Comp2,         Comp3
 		std::vector<ComponentTypeInfo*> compTypeInfos;   // CompTypeInfo1, CompTypeInfo2, CompTypeInfo3
-	
-		std::vector<CompTableRecord> tableRecords;
+		std::vector<CompTableRecord> tableRecords;       // CompTable1,    CompTable2,    CompTable3
 
 		bool InitTable(WorldImpl* world_);
 		void Claim();
@@ -340,10 +338,10 @@ namespace ECS
 		// Component
 		Hashmap<CompRecord*> compRecordMap;
 		Util::SparseArray<CompRecord> compRecordPool;
-		Util::SparseArray<ComponentTypeInfo> compTypePool;
+		Util::SparseArray<ComponentTypeInfo> compTypePool;	// Component reflect type info
 
 		// Graph
-		TableGraphEdge* freeEdge;
+		TableGraphEdge* freeEdge = nullptr;
 
 		// Query
 		Util::SparseArray<QueryInfo> queryPool;
@@ -382,16 +380,16 @@ namespace ECS
 			tablePool.Clear();
 			pendingTables.Clear();
 
+			// Free root table
+			root.Release();
+
 			// Free graph edges
 			TableGraphEdgeListNode* cur, *next = &freeEdge->listNode;
-			while ((cur = next) != nullptr)
+			while ((cur = next))
 			{
 				next = cur->next;
-				free(cur);
+				ECS_FREE(cur);
 			}
-
-			// Release root node
-			root.Release();
 
 			// Fini all queries
 			FiniQueries();
@@ -1353,8 +1351,6 @@ namespace ECS
 
 		EntityTable* TableTraverseAdd(EntityTable* table, EntityID compID, EntityTableDiff& diff)
 		{
-			assert(compID != 0);
-
 			EntityTable* node = table != nullptr ? table : &root;
 			TableGraphEdge* edge = EnsureTableGraphEdge(node->graphNode.add, compID);
 			EntityTable* ret = edge->to;
@@ -1364,7 +1360,7 @@ namespace ECS
 				assert(ret != nullptr);
 			}
 
-			PopulateTableDiff(edge, compID, INVALID_ENTITY, diff);
+			PopulateTableDiff(edge, INVALID_ENTITY, INVALID_ENTITY, diff);
 			return ret;
 		}
 
@@ -1590,7 +1586,7 @@ namespace ECS
 			}
 
 			// Create a new TableDiff
-			EntityTableDiff* diff = Util::NewObject<EntityTableDiff>();
+			EntityTableDiff* diff = ECS_NEW_OBJECT<EntityTableDiff>();
 			edge->diff = diff;
 			if (addedCount > 0)
 				diff->added.reserve(addedCount);
@@ -1625,15 +1621,17 @@ namespace ECS
 			edge->to = to;
 			edge->compID = compID;
 
-			// TODO
+			EnsureHiTableGraphEdge(from->graphNode.add, compID);
 
 			if (from != to)
 			{
 				TableGraphEdgeListNode* toNode = &to->graphNode.incomingEdges;
 				TableGraphEdgeListNode* next = toNode->next;
 				toNode->next = &edge->listNode;
+
 				edge->listNode.prev = toNode;
 				edge->listNode.next = next;
+
 				if (next != nullptr)
 					next->prev = &edge->listNode;
 
@@ -1678,7 +1676,7 @@ namespace ECS
 			if (ret != nullptr)
 				freeEdge = (TableGraphEdge*)ret->listNode.next;
 			else
-				ret = (TableGraphEdge*)malloc(sizeof(TableGraphEdge));
+				ret = ECS_MALLOC_T(TableGraphEdge);
 
 			assert(ret != nullptr);
 			memset(ret, 0, sizeof(TableGraphEdge));
@@ -1752,10 +1750,23 @@ namespace ECS
 				DisconnectEdge(kvp.second, kvp.first);
 
 			// Remove incoming edges
-			TableGraphEdgeListNode* cur, *next = &graphNode.incomingEdges;
-			while ((cur = next) != nullptr)
+			TableGraphEdgeListNode* cur, *next = graphNode.incomingEdges.next;
+			while ((cur = next))
 			{
 				next = cur->next;
+
+				TableGraphEdge* edge = (TableGraphEdge*)cur;
+				DisconnectEdge(edge, edge->compID);
+				if (edge->from != nullptr)
+				{
+					edge->from->graphNode.add.hiEdges.erase(edge->compID);
+					edge->from->graphNode.remove.hiEdges.erase(edge->compID);
+				}
+			}
+			TableGraphEdgeListNode* prev = graphNode.incomingEdges.prev;
+			while ((cur = prev))
+			{
+				prev = cur->prev;
 
 				TableGraphEdge* edge = (TableGraphEdge*)cur;
 				DisconnectEdge(edge, edge->compID);
@@ -1775,7 +1786,11 @@ namespace ECS
 			assert(edge != nullptr);
 			assert(edge->compID == compID);
 
-			// Remove from list of Edges
+			// TODO: is valid?
+			if (edge->from == nullptr)
+				return;
+
+			// Remove node from list of Edges
 			TableGraphEdgeListNode* prev = edge->listNode.prev;
 			TableGraphEdgeListNode* next = edge->listNode.next;
 			if (prev)
@@ -1786,13 +1801,15 @@ namespace ECS
 			// Free table diff
 			EntityTableDiff* diff = edge->diff;
 			if (diff != nullptr && diff != &EMPTY_TABLE_DIFF)
-				Util::DeleteObject(diff);
+				ECS_DELETE_OBJECT(diff);
 
-			edge->from = nullptr;
 			edge->to = nullptr;
 
+			// Component use small cache array when compID < HI_COMPONENT_ID
 			if (compID > HI_COMPONENT_ID)
 				FreeTableGraphEdge(edge);
+			else
+				edge->from = nullptr;
 		}
 
 		////////////////////////////////////////////////////////////////////////////////
@@ -1848,8 +1865,6 @@ namespace ECS
 		}
 	};
 
-
-
 	////////////////////////////////////////////////////////////////////////////////
 	//// TableCache
 	////////////////////////////////////////////////////////////////////////////////
@@ -1886,7 +1901,6 @@ namespace ECS
 			return false;
 
 		RemoveTableCacheNode(node->empty ? emptyTables : tables, node);
-		free(node);
 
 		tableRecordMap.erase(table->tableID);
 		return true;
