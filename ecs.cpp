@@ -71,7 +71,7 @@ namespace ECS
 	struct TableGraphEdges
 	{
 		TableGraphEdge loEdges[HI_COMPONENT_ID]; // id < HI_COMPONENT_ID
-		Hashmap<TableGraphEdge> hiEdges;
+		Hashmap<TableGraphEdge*> hiEdges;
 	};
 
 	struct TableGraphNode
@@ -342,10 +342,13 @@ namespace ECS
 		Util::SparseArray<CompRecord> compRecordPool;
 		Util::SparseArray<ComponentTypeInfo> compTypePool;
 
-		// System
+		// Graph
+		TableGraphEdge* freeEdge;
 
 		// Query
 		Util::SparseArray<QueryInfo> queryPool;
+
+		bool isFini = false;
 
 		WorldImpl()
 		{
@@ -366,7 +369,9 @@ namespace ECS
 
 		~WorldImpl()
 		{	
-			// Skip id 0
+			isFini = true;
+
+			// Free all tables, neet to skip id 0
 			size_t tabelCount = tablePool.Count();
 			for (size_t i = 1; i < tabelCount; i++)
 			{
@@ -376,8 +381,22 @@ namespace ECS
 			}
 			tablePool.Clear();
 			pendingTables.Clear();
+
+			// Free graph edges
+			TableGraphEdgeListNode* cur, *next = &freeEdge->listNode;
+			while ((cur = next) != nullptr)
+			{
+				next = cur->next;
+				free(cur);
+			}
+
+			// Release root node
 			root.Release();
+
+			// Fini all queries
 			FiniQueries();
+
+			// Clear entity pool
 			entityPool.Clear();
 		}
 
@@ -1653,41 +1672,71 @@ namespace ECS
 		//// Table graph
 		////////////////////////////////////////////////////////////////////////////////
 
-		TableGraphEdge* EnsureTableGraphEdge(TableGraphEdges& egdes, EntityID compID)
+		TableGraphEdge* RequestTableGraphEdge()
+		{
+			TableGraphEdge* ret = freeEdge;
+			if (ret != nullptr)
+				freeEdge = (TableGraphEdge*)ret->listNode.next;
+			else
+				ret = (TableGraphEdge*)malloc(sizeof(TableGraphEdge));
+
+			assert(ret != nullptr);
+			memset(ret, 0, sizeof(TableGraphEdge));
+			return ret;
+		}
+
+		void FreeTableGraphEdge(TableGraphEdge* edge)
+		{
+			edge->listNode.next =(TableGraphEdgeListNode*)freeEdge;
+			freeEdge = edge;
+		}
+
+		TableGraphEdge* EnsureHiTableGraphEdge(TableGraphEdges& edges, EntityID compID)
+		{
+			auto it = edges.hiEdges.find(compID);
+			if (it != edges.hiEdges.end())
+				return it->second;
+
+			TableGraphEdge* edge = nullptr;
+			if (compID < HI_COMPONENT_ID)
+				edge = &edges.loEdges[compID];
+			else
+				edge = RequestTableGraphEdge();
+
+			edges.hiEdges[compID] = edge;
+			return edge;
+		}
+
+		TableGraphEdge* EnsureTableGraphEdge(TableGraphEdges& edges, EntityID compID)
 		{
 			TableGraphEdge* edge = nullptr;
 			if (compID < HI_COMPONENT_ID)
 			{
-				edge = &egdes.loEdges[compID];
+				edge = &edges.loEdges[compID];
 			}
 			else
 			{
-				auto it = egdes.hiEdges.find(compID);
-				if (it != egdes.hiEdges.end())
-				{
-					edge = &it->second;
-				}
+				auto it = edges.hiEdges.find(compID);
+				if (it != edges.hiEdges.end())
+					edge = it->second;
 				else
-				{
-					auto it = egdes.hiEdges.emplace(compID, TableGraphEdge());
-					edge = &it.first->second;
-				}
+					edge = EnsureHiTableGraphEdge(edges, compID);
 			}
 			return edge;
 		}
 
-		TableGraphEdge* FindTableGraphEdge(TableGraphEdges& egdes, EntityID compID)
+		TableGraphEdge* FindTableGraphEdge(TableGraphEdges& edges, EntityID compID)
 		{
 			TableGraphEdge* edge = nullptr;
 			if (compID < HI_COMPONENT_ID)
 			{
-				edge = &egdes.loEdges[compID];
+				edge = &edges.loEdges[compID];
 			}
 			else
 			{
-				auto it = egdes.hiEdges.find(compID);
-				if (it != egdes.hiEdges.end())
-					edge = &it->second;
+				auto it = edges.hiEdges.find(compID);
+				if (it != edges.hiEdges.end())
+					edge = it->second;
 			}
 			return edge;
 		}
@@ -1699,48 +1748,51 @@ namespace ECS
 			// Remove outgoing edges
 			for (auto& kvp : graphNode.add.hiEdges)
 				DisconnectEdge(kvp.second, kvp.first);
-
-
 			for (auto& kvp : graphNode.remove.hiEdges)
 				DisconnectEdge(kvp.second, kvp.first);
 
 			// Remove incoming edges
-			TableGraphEdgeListNode* node = &graphNode.incomingEdges;
-			while (node != nullptr)
+			TableGraphEdgeListNode* cur, *next = &graphNode.incomingEdges;
+			while ((cur = next) != nullptr)
 			{
-				TableGraphEdge* edge = (TableGraphEdge*)node;
-				DisconnectEdge(*edge, edge->compID);
+				next = cur->next;
+
+				TableGraphEdge* edge = (TableGraphEdge*)cur;
+				DisconnectEdge(edge, edge->compID);
 				if (edge->from != nullptr)
 				{
 					edge->from->graphNode.add.hiEdges.erase(edge->compID);
 					edge->from->graphNode.remove.hiEdges.erase(edge->compID);
 				}
-				node = node->next;
 			}
 
 			graphNode.add.hiEdges.clear();
 			graphNode.remove.hiEdges.clear();
 		}
 
-		void DisconnectEdge(TableGraphEdge& edge, EntityID compID)
+		void DisconnectEdge(TableGraphEdge* edge, EntityID compID)
 		{
-			assert(edge.compID == compID);
+			assert(edge != nullptr);
+			assert(edge->compID == compID);
 
 			// Remove from list of Edges
-			TableGraphEdgeListNode* prev = edge.listNode.prev;
-			TableGraphEdgeListNode* next = edge.listNode.next;
+			TableGraphEdgeListNode* prev = edge->listNode.prev;
+			TableGraphEdgeListNode* next = edge->listNode.next;
 			if (prev)
 				prev->next = next;
 			if (next)
 				next->prev = prev;
 
 			// Free table diff
-			EntityTableDiff* diff = edge.diff;
+			EntityTableDiff* diff = edge->diff;
 			if (diff != nullptr && diff != &EMPTY_TABLE_DIFF)
 				Util::DeleteObject(diff);
 
-			edge.from = nullptr;
-			edge.to = nullptr;
+			edge->from = nullptr;
+			edge->to = nullptr;
+
+			if (compID > HI_COMPONENT_ID)
+				FreeTableGraphEdge(edge);
 		}
 
 		////////////////////////////////////////////////////////////////////////////////
