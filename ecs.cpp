@@ -6,17 +6,37 @@ namespace ECS
 	struct EntityTable;
 	struct EntityInfo;
 
-// EntityID FFFFffff << 32     |        FFFFffff
-//          generation                   realID
+// -----------------------------------------
+//            EntityID: 64                 |
+//__________________________________________
+// 	 8     |     24          |    32       |
+// ----------------------------------------|
+//   ff    |     ffFFff      |   FFFFffff  |
+// ----------------------------------------|
+//  role   |   generation    |    entity   |
+// ----------------------------------------|
+//  role   |          component            |
+//------------------------------------------
+
 #define ECS_ENTITY_MASK               (0xFFFFffffull)	// 32
 #define ECS_ROLE_MASK                 (0xFFull << 56)
 #define ECS_COMPONENT_MASK            (~ECS_ROLE_MASK)	// 56
 #define ECS_GENERATION_MASK           (0xFFFFull << 32)
 #define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
+#define ECS_ENTITY_COMBO(lo, hi) ((static_cast<U64>(hi) << 32) + static_cast<U32>(lo))
 
-	const EntityID HI_COMPONENT_ID = 256;
-	const U32 FirstUserComponentID = 32; // [32 - 256] user components	
-	const U32 FirstUserEntityID = HI_COMPONENT_ID + 128; // [256 - 384] build-in tags
+// EntityRole
+#define ECS_ROLE_PAIR                 (0x01ull) << 56
+
+#define ECS_MAKE_PAIR(re, obj) (ECS_ROLE_PAIR | ECS_ENTITY_COMBO(obj, re))
+#define ECS_HAS_ROLE(e, p) ((e & ECS_ROLE_MASK) == p)
+#define ECS_GET_PAIR_FIRST(e) ((e & ECS_COMPONENT_MASK) >> 32)
+#define ECS_GET_PAIR_SECOND(e) ((e & ECS_COMPONENT_MASK) & 0xffFFffFF)
+
+	const EntityID HiComponentID = 256;
+	const U32 FirstUserComponentID = 32;               // [32 - 256] user components	
+	const U32 FirstUserEntityID = HiComponentID + 128; // [256 - 384] build-in tags
+
 	const size_t QUERY_ITEM_SMALL_CACHE_SIZE = 4;
 
 	inline U64 EntityTypeHash(const EntityType& entityType)
@@ -43,7 +63,16 @@ namespace ECS
 	//// Definition
 	////////////////////////////////////////////////////////////////////////////////
 
-	const EntityID EcsTagPrefab = HI_COMPONENT_ID + 0;
+	// Tags
+	const EntityID EcsTagPrefab = HiComponentID + 0;
+	// Relations
+	const EntityID EcsRelationIsA = HiComponentID + 1;
+
+	// Extern
+	const EntityID ECSIsA = EcsRelationIsA;
+
+	///////////////////////////////////////////////////////////////
+	// Table graph
 
 	struct EntityTableDiff
 	{
@@ -52,9 +81,6 @@ namespace ECS
 	};
 
 	static EntityTableDiff EMPTY_TABLE_DIFF;
-
-	///////////////////////////////////////////////////////////////
-	// Table graph
 
 	struct TableGraphEdgeListNode
 	{
@@ -73,7 +99,7 @@ namespace ECS
 
 	struct TableGraphEdges
 	{
-		TableGraphEdge loEdges[HI_COMPONENT_ID]; // id < HI_COMPONENT_ID
+		TableGraphEdge loEdges[HiComponentID]; // id < HiComponentID
 		Hashmap<TableGraphEdge*> hiEdges;
 	};
 
@@ -157,7 +183,7 @@ namespace ECS
 		CompTableCacheList tables;
 		CompTableCacheList emptyTables;
 
-		CompTableRecord* GetTableRecordFromCache(const EntityTable& table);
+		CompTableRecord* GetTableRecordFromCache(const EntityTable* table);
 		bool RemoveTableFromCache(EntityTable* table, CompTableCacheListNode* cacheNode);
 		void SetTableCacheState(EntityTable* table, bool isEmpty);
 		void InsertTableIntoCache(const EntityTable* table, CompTableCacheListNode* cacheNode);
@@ -246,6 +272,7 @@ namespace ECS
 	enum TableFlag
 	{
 		TableFlagIsPrefab = 1 << 0,
+		TableFlagHasIsA = 1 << 1,
 	};
 
 	struct ComponentColumnData
@@ -271,6 +298,7 @@ namespace ECS
 		Vector<I32> typeToStorageMap;
 		Vector<I32> storageToTypeMap;
 
+		EntityTable* storageTable = nullptr;		// Without tags
 		Vector<EntityID> entities;
 		Vector<EntityInfo*> entityInfos;
 		Vector<ComponentColumnData> storageColumns; // Comp1,         Comp2,         Comp3
@@ -356,7 +384,7 @@ namespace ECS
 
 		WorldImpl()
 		{
-			compRecordMap.reserve(HI_COMPONENT_ID);
+			compRecordMap.reserve(HiComponentID);
 			entityPool.SetSourceID(&lastID);
 			if (!root.InitTable(this))
 				assert(0);
@@ -485,27 +513,47 @@ namespace ECS
 
 		void EnsureEntity(EntityID entity) override
 		{
-			if (IsEntityAlive(StripGeneration(entity)) == entity)
-				return;
+			if (ECS_HAS_ROLE(entity, ECS_ROLE_PAIR))
+			{
+				EntityID re = ECS_GET_PAIR_FIRST(entity);
+				EntityID comp = ECS_GET_PAIR_SECOND(entity);
 
-			entityPool.Ensure(entity);
+				if (IsEntityAlive(re) != re)
+					entityPool.Ensure(re);
+
+				if (IsEntityAlive(comp) != comp)
+					entityPool.Ensure(comp);
+			}
+			else
+			{
+				if (IsEntityAlive(StripGeneration(entity)) == entity)
+					return;
+
+				entityPool.Ensure(entity);
+			}
 		}
 
 		void* GetComponent(EntityID entity, EntityID compID)override
 		{
-			EntityInfo* info = entityPool.Get(entity);
+			EntityInfo* info = entityPool.Get(entity); 
 			if (info == nullptr || info->table == nullptr)
 				return nullptr;
 
-			CompRecord* compRecord = GetComponentRecord(compID);
-			if (compRecord == nullptr)
+			CompTableRecord* tableRecord = GetTableRecord(info->table, compID);
+			if (tableRecord == nullptr)
 				return nullptr;
 
-			CompTableRecord* tableRecord = compRecord->cache.GetTableRecordFromCache(*info->table);
-			if (tableRecord == nullptr)
-				assert(0);
-
 			return GetComponentWFromTable(*info->table, info->row, tableRecord->column);
+		}
+
+		bool HasComponent(EntityID entity, EntityID compID) override
+		{
+			return GetComponent(entity, compID) != nullptr;
+		}
+
+		void AddRelation(EntityID entity, EntityID relation, EntityID compID)override
+		{
+			AddComponent(entity, ECS_MAKE_PAIR(relation, compID));
 		}
 
 		bool HasComponentTypeAction(EntityID compID)const override
@@ -579,7 +627,7 @@ namespace ECS
 				assert(info->algnment == desc.alignment);
 			}
 
-			if (entityID >= lastComponentID && entityID < HI_COMPONENT_ID)
+			if (entityID >= lastComponentID && entityID < HiComponentID)
 				lastComponentID = (U32)(entityID + 1);
 
 			return entityID;
@@ -597,7 +645,7 @@ namespace ECS
 		void AddComponent(EntityID entity, EntityID compID) override
 		{
 			assert(IsEntityAlive(entity));
-			assert(IsEntityAlive(compID));
+
 			EntityInternalInfo info = {};
 			GetEntityInternalInfo(info, entity);
 
@@ -790,7 +838,7 @@ namespace ECS
 			if (compRecord == nullptr)
 				return false;
 
-			CompTableRecord* compTableRecord = compRecord->cache.GetTableRecordFromCache(*table);
+			CompTableRecord* compTableRecord = compRecord->cache.GetTableRecordFromCache(table->storageTable);
 			if (compTableRecord == nullptr)
 				return false;
 
@@ -1211,14 +1259,14 @@ namespace ECS
 		EntityID CreateNewComponentID()
 		{
 			EntityID ret = INVALID_ENTITY;
-			if (lastComponentID < HI_COMPONENT_ID)
+			if (lastComponentID < HiComponentID)
 			{
 				do {
 					ret = lastComponentID++;
-				} while (IsEntityAlive(ret) != INVALID_ENTITY && ret <= HI_COMPONENT_ID);
+				} while (IsEntityAlive(ret) != INVALID_ENTITY && ret <= HiComponentID);
 			}
 
-			if (ret == INVALID_ENTITY || ret >= HI_COMPONENT_ID)
+			if (ret == INVALID_ENTITY || ret >= HiComponentID)
 				ret = CreateNewEntityID();
 
 			return ret;
@@ -1357,6 +1405,11 @@ namespace ECS
 			return CreateNewTable(compIDs);
 		}
 
+		EntityTable* FindOrCreateTableWithPrefab(EntityTable* table, EntityID prefab)
+		{
+			return table;
+		}
+
 		EntityTable* FindOrCreateTableWithID(EntityTable* parent, EntityID compID, TableGraphEdge* edge)
 		{
 			EntityType entityType = parent->type;
@@ -1371,8 +1424,19 @@ namespace ECS
 			if (it != tableTypeHashMap.end())
 				return it->second;
 
+			// TEST
+			if (ECS_HAS_ROLE(compID, ECS_ROLE_PAIR))
+				int breakPoint = 0;
+
 			EntityTable* newTable = CreateNewTable(entityType);
 			assert(newTable);
+
+			// Create from prefab if comp has relation of isA
+			if (ECS_HAS_ROLE(compID, ECS_ROLE_PAIR) && ECS_GET_PAIR_FIRST(compID) == EcsRelationIsA)
+			{
+				EntityID prefab = ECS_GET_PAIR_SECOND(compID);
+				newTable = FindOrCreateTableWithPrefab(newTable, prefab);
+			}
 
 			// Connect parent with new table 
 			AddTableGraphEdge(edge, compID, parent, newTable);
@@ -1400,7 +1464,7 @@ namespace ECS
 				assert(ret != nullptr);
 			}
 
-			PopulateTableDiff(edge, INVALID_ENTITY, INVALID_ENTITY, diff);
+			PopulateTableDiff(edge, compID, INVALID_ENTITY, diff);
 			return ret;
 		}
 
@@ -1417,7 +1481,7 @@ namespace ECS
 			if (compRecord == nullptr)
 				return nullptr;
 
-			return compRecord->cache.GetTableRecordFromCache(*table);
+			return compRecord->cache.GetTableRecordFromCache(table->storageTable);
 		}
 		
 		void CommitTables(EntityID entity, EntityInternalInfo* info, EntityTable* dstTable, EntityTableDiff& diff, bool construct)
@@ -1623,10 +1687,11 @@ namespace ECS
 			addedCount += dstNumColumns - dstColumnIndex;
 			removedCount += srcNumColumns - srcColumnIndex;
 
-			trivialEdge &= (addedCount + removedCount) < 1;
+			trivialEdge &= (addedCount + removedCount) <= 1;
 			if (trivialEdge)
 			{
-				edge->diff = &EMPTY_TABLE_DIFF;
+				if (t1->storageTable != t2->storageTable)
+					edge->diff = &EMPTY_TABLE_DIFF;
 				return;
 			}
 
@@ -1741,7 +1806,7 @@ namespace ECS
 				return it->second;
 
 			TableGraphEdge* edge = nullptr;
-			if (compID < HI_COMPONENT_ID)
+			if (compID < HiComponentID)
 				edge = &edges.loEdges[compID];
 			else
 				edge = RequestTableGraphEdge();
@@ -1753,7 +1818,7 @@ namespace ECS
 		TableGraphEdge* EnsureTableGraphEdge(TableGraphEdges& edges, EntityID compID)
 		{
 			TableGraphEdge* edge = nullptr;
-			if (compID < HI_COMPONENT_ID)
+			if (compID < HiComponentID)
 			{
 				edge = &edges.loEdges[compID];
 			}
@@ -1771,7 +1836,7 @@ namespace ECS
 		TableGraphEdge* FindTableGraphEdge(TableGraphEdges& edges, EntityID compID)
 		{
 			TableGraphEdge* edge = nullptr;
-			if (compID < HI_COMPONENT_ID)
+			if (compID < HiComponentID)
 			{
 				edge = &edges.loEdges[compID];
 			}
@@ -1850,8 +1915,8 @@ namespace ECS
 
 			edge->to = nullptr;
 
-			// Component use small cache array when compID < HI_COMPONENT_ID
-			if (compID > HI_COMPONENT_ID)
+			// Component use small cache array when compID < HiComponentID
+			if (compID > HiComponentID)
 				FreeTableGraphEdge(edge);
 			else
 				edge->from = nullptr;
@@ -1913,9 +1978,9 @@ namespace ECS
 	////////////////////////////////////////////////////////////////////////////////
 	//// TableCache
 	////////////////////////////////////////////////////////////////////////////////
-	CompTableRecord* EntityTableCache::GetTableRecordFromCache(const EntityTable& table)
+	CompTableRecord* EntityTableCache::GetTableRecordFromCache(const EntityTable* table)
 	{
-		auto it = tableRecordMap.find(table.tableID);
+		auto it = tableRecordMap.find(table->tableID);
 		if (it == tableRecordMap.end())
 			return nullptr;
 		return reinterpret_cast<CompTableRecord*>(it->second);
@@ -2022,6 +2087,20 @@ namespace ECS
 		for (auto& id : type)
 			world->EnsureEntity(id);
 
+		// Init table flags
+		for (U32 i = 0; i < type.size(); i++)
+		{
+			EntityID compID = type[i];
+			if (compID == EcsTagPrefab)
+				flags |= TableFlagIsPrefab;
+
+			if (ECS_HAS_ROLE(compID, ECS_ROLE_PAIR))
+			{
+				if (ECS_GET_PAIR_FIRST(compID) == EcsRelationIsA)
+					flags |= TableFlagHasIsA;
+			}
+		}
+
 		//  Register table records
 		RegisterTableRecords();
 
@@ -2044,7 +2123,7 @@ namespace ECS
 			}
 
 			const InfoComponent* compInfo = world->GetComponentInfo(id);
-			if (compInfo == nullptr || compInfo->size <= 0)
+			if (compInfo == nullptr || compInfo->size <= 0)	// Skip tag/Relation
 				continue;
 
 			storageIDs.push_back(id);
@@ -2053,11 +2132,13 @@ namespace ECS
 		{
 			if (storageIDs.size() != type.size())
 			{
-				assert(0);
-				// TODO
+				storageTable = world->FindOrCreateTableWithIDs(storageIDs);
+				storageTable->refCount++;
+				storageType = storageTable->type;
 			}
 			else
 			{
+				storageTable = this;
 				storageType = type;
 			}
 		}
@@ -2125,14 +2206,6 @@ namespace ECS
 			}
 		}
 
-		// Init table flags
-		for (U32 i = 0; i < storageType.size(); i++)
-		{
-			EntityID compID = storageType[i];
-			if (compID == EcsTagPrefab)
-				flags |= TableFlagPrefab;
-		}
-
 		// Notify event of component type info
 		EntityTableEvent ent = {};
 		ent.type = EntityTableEventType::ComponentTypeInfo;
@@ -2173,6 +2246,9 @@ namespace ECS
 			// Remove from hashMap
 			world->tableTypeHashMap.erase(EntityTypeHash(type));
 		}
+
+		if (storageTable != nullptr && storageTable != this)
+			storageTable->Release();
 
 		world->tablePool.Remove(tableID);
 	}
@@ -2355,26 +2431,65 @@ namespace ECS
 		return index;
 	}
 
+	struct TableTypeItem
+	{
+		U32 pos = 0;
+		U32 count = 0;
+	};
 	void EntityTable::RegisterTableRecords()
 	{
 		if (type.empty())
 			return;
 
-		U32 recordCount = 0;
+		// Find all used compIDs
+		std::unordered_map<EntityID, TableTypeItem> relations;
+		std::unordered_map<EntityID, TableTypeItem> objects;
 		for (U32 i = 0; i < type.size(); i++)
 		{
 			EntityID compId = type[i];
-			EntityID realCompID = compId & ECS_COMPONENT_MASK;
-			// TODO: check ECS_ROLE_MASK
+			if (ECS_HAS_ROLE(compId, ECS_ROLE_PAIR))
+			{
+				EntityID relation = ECS_GET_PAIR_FIRST(compId);
+				if (relation != INVALID_ENTITY)
+				{
+					if (relations.count(relation) == 0)
+					{
+						relations[relation] = {};
+						relations[relation].pos = i;
+					}
+					relations[relation].count++;
+				}
 
-			if (realCompID != INVALID_ENTITY)
-				recordCount++;
+				EntityID obj = ECS_GET_PAIR_SECOND(compId);
+				if (obj != INVALID_ENTITY)
+				{
+					if (objects.count(relation) == 0)
+					{
+						objects[obj] = {};
+						objects[obj].pos = i;
+					}
+					objects[obj].count++;
+				}
+			}
 		}
 
-		tableRecords.resize(recordCount);
+		tableRecords.resize(type.size() + relations.size() + objects.size());
 
+		// Base type
+		U32 index = 0;
 		for (U32 i = 0; i < type.size(); i++)
+		{
 			RegisterComponentRecord(type[i], i, 1, tableRecords[i]);
+			index++;
+		}
+			
+		//// Relations
+		//for (auto& kvp : relations)
+		//	RegisterComponentRecord(kvp.first, kvp.second.pos, kvp.second.count, tableRecords[index++]);
+
+		//// Objects
+		//for (auto& kvp : objects)
+		//	RegisterComponentRecord(kvp.first, kvp.second.pos, kvp.second.count, tableRecords[index++]);
 	}
 
 	void EntityTable::UnregisterTableRecords()
@@ -2383,7 +2498,7 @@ namespace ECS
 		{
 			CompTableRecord* tableRecord = &tableRecords[i];
 			EntityTableCache* cache = tableRecord->header.cache;
-			cache->RemoveTableFromCache(this, &tableRecord->header);
+			cache->RemoveTableFromCache(storageTable, &tableRecord->header);
 
 			if (cache->tableRecordMap.empty())
 			{
@@ -2401,7 +2516,7 @@ namespace ECS
 		assert(compRecord != nullptr);
 		tableRecord.compID = compID;
 		tableRecord.column = column;	// Index for component from entity type
-		tableRecord.count = 1;
+		tableRecord.count = count;
 		compRecord->cache.InsertTableIntoCache(this, &tableRecord.header);
 		return true;
 	}

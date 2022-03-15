@@ -282,9 +282,9 @@ namespace Util
 	class SparseArray
 	{
 	private:
-		static const size_t DEFAULT_BLOCK_COUNT = 4096;
+		static const I32 DEFAULT_BLOCK_COUNT = 4096;
 		static const U64 ENTITY_MASK = 0xFFFFffffull;
-		static const U64 GENERATION_MASK = 0xFFFFull << 32;
+		static const U64 GENERATION_MASK = 0xFFffull << 32; // [32 - 48]
 
 	public:
 		struct Chunk

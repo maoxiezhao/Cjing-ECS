@@ -29,6 +29,12 @@ namespace ECS
 	static const size_t MAX_QUERY_ITEM_COUNT = 16;
 
 	////////////////////////////////////////////////////////////////////////////////
+	//// Build-in
+	////////////////////////////////////////////////////////////////////////////////
+
+	extern const EntityID ECSIsA;
+
+	////////////////////////////////////////////////////////////////////////////////
 	//// Components
 	////////////////////////////////////////////////////////////////////////////////
 
@@ -177,8 +183,15 @@ public:                                                   \
 		virtual void DeleteEntity(EntityID entity) = 0;
 		virtual void SetEntityName(EntityID entity, const char* name) = 0;
 		virtual void EnsureEntity(EntityID entity) = 0;
-
 		virtual void* GetComponent(EntityID entity, EntityID compID) = 0;
+		virtual bool HasComponent(EntityID entity, EntityID compID) = 0;
+
+		template<typename C>
+		bool HasComponent(EntityID entity)
+		{
+			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
+			return HasComponent(compID, compID);
+		}
 
 		template<typename C>
 		C* GetComponent(EntityID entity)
@@ -214,6 +227,14 @@ public:                                                   \
 			ComponentTypeRegister<C>::ComponentID(*this);
 		}
 
+		template<typename C>
+		void AddRelation(EntityID entity, EntityID relation)
+		{
+			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
+			AddRelation(entity, relation, compID);
+		}
+
+		virtual void AddRelation(EntityID entity, EntityID relation, EntityID compID) = 0;
 		virtual bool HasComponentTypeAction(EntityID compID)const = 0;
 		virtual ComponentTypeInfo* GetComponentTypInfo(EntityID compID) = 0;
 		virtual const ComponentTypeInfo* GetComponentTypInfo(EntityID compID)const = 0;
@@ -246,16 +267,22 @@ public:                                                   \
 		EntityBuilder() = delete;
 
 		template <class C>
-		const EntityBuilder& with(const C& comp) const
+		const EntityBuilder& With(const C& comp) const
 		{
 			world->AddComponent(entity, comp);
 			return *this;
 		}
 
 		template <class C>
-		const EntityBuilder& with() const
+		const EntityBuilder& With() const
 		{
 			world->AddComponent<C>(entity);
+			return *this;
+		}
+
+		const EntityBuilder& IsA(EntityID prefabID) const
+		{
+			world->AddRelation(entity, ECSIsA, prefabID);
 			return *this;
 		}
 
