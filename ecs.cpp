@@ -18,27 +18,34 @@ namespace ECS
 //  role   |          component            |
 //------------------------------------------
 
+	const EntityID HiComponentID = 256;
+	const U32 FirstUserComponentID = 32;               // [32 - 256] user components	
+	const U32 FirstUserEntityID = HiComponentID + 128; // [256 - 384] build-in tags
+
+	// Roles
+	const EntityID EcsRolePair = ((0x01ull) << 56);
+	const EntityID EcsRoleShared = ((0x02ull) << 56);
+
+	// Tags
+	const EntityID EcsTagPrefab = HiComponentID + 0;
+
+	// Relations
+	const EntityID EcsRelationIsA = HiComponentID + 1;
+
 #define ECS_ENTITY_MASK               (0xFFFFffffull)	// 32
 #define ECS_ROLE_MASK                 (0xFFull << 56)
 #define ECS_COMPONENT_MASK            (~ECS_ROLE_MASK)	// 56
 #define ECS_GENERATION_MASK           (0xFFFFull << 32)
 #define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
-#define ECS_ENTITY_COMBO(lo, hi) ((static_cast<U64>(hi) << 32) + static_cast<U32>(lo))
 
-// EntityRole
-#define ECS_ROLE_PAIR                 (0x01ull) << 56
-
-#define ECS_MAKE_PAIR(re, obj) (ECS_ROLE_PAIR | ECS_ENTITY_COMBO(obj, re))
 #define ECS_HAS_ROLE(e, p) ((e & ECS_ROLE_MASK) == p)
-#define ECS_GET_PAIR_FIRST(e) ((e & ECS_COMPONENT_MASK) >> 32)
-#define ECS_GET_PAIR_SECOND(e) ((e & ECS_COMPONENT_MASK) & 0xffFFffFF)
-
-	const EntityID HiComponentID = 256;
-	const U32 FirstUserComponentID = 32;               // [32 - 256] user components	
-	const U32 FirstUserEntityID = HiComponentID + 128; // [256 - 384] build-in tags
-
-	const size_t QUERY_ITEM_SMALL_CACHE_SIZE = 4;
-
+#define ECS_ENTITY_HI(e) (static_cast<U32>((e) >> 32))
+#define ECS_ENTITY_LOW(e) (static_cast<U32>(e))
+#define ECS_ENTITY_COMBO(lo, hi) ((static_cast<U64>(hi) << 32) + static_cast<U32>(lo))
+#define ECS_MAKE_PAIR(re, obj) (EcsRolePair | ECS_ENTITY_COMBO(obj, re))
+#define ECS_GET_PAIR_FIRST(e) (ECS_ENTITY_HI(e & ECS_COMPONENT_MASK))
+#define ECS_GET_PAIR_SECOND(e) (ECS_ENTITY_LOW(e))
+	
 	inline U64 EntityTypeHash(const EntityType& entityType)
 	{
 		return Util::HashFunc(entityType.data(), entityType.size() * sizeof(EntityID));
@@ -55,21 +62,12 @@ namespace ECS
 	}
 
 	static bool FlushTableState(WorldImpl* world, EntityTable* table, EntityID id, I32 column);
-
 	using EntityIDAction = bool(*)(WorldImpl*, EntityTable*, EntityID, I32);
 	bool ForEachEntityID(WorldImpl* world, EntityTable* table, EntityIDAction action);
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Definition
 	////////////////////////////////////////////////////////////////////////////////
-
-	// Tags
-	const EntityID EcsTagPrefab = HiComponentID + 0;
-	// Relations
-	const EntityID EcsRelationIsA = HiComponentID + 1;
-
-	// Extern
-	const EntityID ECSIsA = EcsRelationIsA;
 
 	///////////////////////////////////////////////////////////////
 	// Table graph
@@ -213,6 +211,7 @@ namespace ECS
 		I32 column;
 	};
 
+	const size_t QUERY_ITEM_SMALL_CACHE_SIZE = 4;
 	struct QueryInfo
 	{
 		U64 queryID;
@@ -513,7 +512,7 @@ namespace ECS
 
 		void EnsureEntity(EntityID entity) override
 		{
-			if (ECS_HAS_ROLE(entity, ECS_ROLE_PAIR))
+			if (ECS_HAS_ROLE(entity, EcsRolePair))
 			{
 				EntityID re = ECS_GET_PAIR_FIRST(entity);
 				EntityID comp = ECS_GET_PAIR_SECOND(entity);
@@ -533,7 +532,12 @@ namespace ECS
 			}
 		}
 
-		void* GetComponent(EntityID entity, EntityID compID)override
+		void Instantiate(EntityID entity, EntityID prefab) override
+		{
+			AddComponent(entity, ECS_MAKE_PAIR(EcsRelationIsA, prefab));
+		}
+
+		void* GetComponent(EntityID entity, EntityID compID) override
 		{
 			EntityInfo* info = entityPool.Get(entity); 
 			if (info == nullptr || info->table == nullptr)
@@ -1217,7 +1221,11 @@ namespace ECS
 				SetComponent(tagID, InfoComponent::GetComponentID(), sizeof(InfoComponent), &tagInfo, false);
 				SetEntityName(tagID, name);
 			};
+			// Tags
 			InitTag(EcsTagPrefab, "EcsTagPrefab");
+
+			// Relation
+			InitTag(EcsRelationIsA, "EcsRelationIsA");
 		}
 
 		void InitSystemComponent()
@@ -1396,6 +1404,15 @@ namespace ECS
 			return ret;
 		}
 
+		EntityTable* GetTable(EntityID entity)
+		{
+			EntityInfo* info = entityPool.Get(entity);
+			if (info == nullptr)
+				return nullptr;
+
+			return info->table;
+		}
+
 		EntityTable* FindOrCreateTableWithIDs(const Vector<EntityID>& compIDs)
 		{
 			auto it = tableTypeHashMap.find(EntityTypeHash(compIDs));
@@ -1407,6 +1424,37 @@ namespace ECS
 
 		EntityTable* FindOrCreateTableWithPrefab(EntityTable* table, EntityID prefab)
 		{
+			if (table->flags & TableFlagIsPrefab)
+				return table;
+
+			EntityTable* prefabTable = GetTable(prefab);
+			if (prefabTable == nullptr)
+				return table;
+
+			for (int i = (prefabTable->type.size() - 1); i >= 0; i--)
+			{
+				EntityID compID = prefabTable->type[i];
+				if (ECS_HAS_ROLE(compID, EcsRoleShared))
+				{
+					// TODO: support SharedComponents
+					assert(0);
+					continue;
+				}
+
+				if (compID == EcsTagPrefab)
+					continue;
+
+				if (ECS_HAS_ROLE(compID, EcsRolePair) && (ECS_GET_PAIR_FIRST(compID) == EcsRelationIsA))
+				{
+					EntityID baseOfPrefab = ECS_GET_PAIR_SECOND(compID);
+					table = FindOrCreateTableWithPrefab(table, baseOfPrefab);
+				}
+
+				// In default case, we just add datas of prefab to current table
+				EntityTableDiff diff = {};
+				table = TableTraverseAdd(table, compID & ECS_COMPONENT_MASK, diff);
+			}
+
 			return table;
 		}
 
@@ -1425,14 +1473,14 @@ namespace ECS
 				return it->second;
 
 			// TEST
-			if (ECS_HAS_ROLE(compID, ECS_ROLE_PAIR))
+			if (ECS_HAS_ROLE(compID, EcsRolePair))
 				int breakPoint = 0;
 
 			EntityTable* newTable = CreateNewTable(entityType);
 			assert(newTable);
 
 			// Create from prefab if comp has relation of isA
-			if (ECS_HAS_ROLE(compID, ECS_ROLE_PAIR) && ECS_GET_PAIR_FIRST(compID) == EcsRelationIsA)
+			if (ECS_HAS_ROLE(compID, EcsRolePair) && ECS_GET_PAIR_FIRST(compID) == EcsRelationIsA)
 			{
 				EntityID prefab = ECS_GET_PAIR_SECOND(compID);
 				newTable = FindOrCreateTableWithPrefab(newTable, prefab);
@@ -2094,7 +2142,7 @@ namespace ECS
 			if (compID == EcsTagPrefab)
 				flags |= TableFlagIsPrefab;
 
-			if (ECS_HAS_ROLE(compID, ECS_ROLE_PAIR))
+			if (ECS_HAS_ROLE(compID, EcsRolePair))
 			{
 				if (ECS_GET_PAIR_FIRST(compID) == EcsRelationIsA)
 					flags |= TableFlagHasIsA;
@@ -2447,7 +2495,7 @@ namespace ECS
 		for (U32 i = 0; i < type.size(); i++)
 		{
 			EntityID compId = type[i];
-			if (ECS_HAS_ROLE(compId, ECS_ROLE_PAIR))
+			if (ECS_HAS_ROLE(compId, EcsRolePair))
 			{
 				EntityID relation = ECS_GET_PAIR_FIRST(compId);
 				if (relation != INVALID_ENTITY)

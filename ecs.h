@@ -29,12 +29,6 @@ namespace ECS
 	static const size_t MAX_QUERY_ITEM_COUNT = 16;
 
 	////////////////////////////////////////////////////////////////////////////////
-	//// Build-in
-	////////////////////////////////////////////////////////////////////////////////
-
-	extern const EntityID ECSIsA;
-
-	////////////////////////////////////////////////////////////////////////////////
 	//// Components
 	////////////////////////////////////////////////////////////////////////////////
 
@@ -183,6 +177,8 @@ public:                                                   \
 		virtual void DeleteEntity(EntityID entity) = 0;
 		virtual void SetEntityName(EntityID entity, const char* name) = 0;
 		virtual void EnsureEntity(EntityID entity) = 0;
+		virtual void Instantiate(EntityID entity, EntityID prefab) = 0;
+
 		virtual void* GetComponent(EntityID entity, EntityID compID) = 0;
 		virtual bool HasComponent(EntityID entity, EntityID compID) = 0;
 
@@ -280,9 +276,9 @@ public:                                                   \
 			return *this;
 		}
 
-		const EntityBuilder& IsA(EntityID prefabID) const
+		const EntityBuilder& Instantiate(EntityID prefabID) const
 		{
-			world->AddRelation(entity, ECSIsA, prefabID);
+			world->Instantiate(entity, prefabID);
 			return *this;
 		}
 
