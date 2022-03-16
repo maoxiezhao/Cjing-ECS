@@ -24,6 +24,7 @@ using Vector = std::vector<Value>;
 
 #define ECS_MALLOC(n) malloc(n)
 #define ECS_MALLOC_T(T) (T*)malloc(sizeof(T))
+#define ECS_MALLOC_T_N(T, n) (T*)malloc(sizeof(T) * n)
 #define ECS_NEW_PLACEMENT(mem, T) new (mem) T()
 #define ECS_FREE(ptr) free(ptr)
 
