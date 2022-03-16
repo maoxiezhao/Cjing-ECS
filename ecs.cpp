@@ -4,7 +4,6 @@ namespace ECS
 {
 	struct WorldImpl;
 	struct EntityTable;
-	struct EntityInfo;
 
 // -----------------------------------------
 //            EntityID: 64                 |
@@ -45,6 +44,7 @@ namespace ECS
 #define ECS_MAKE_PAIR(re, obj) (EcsRolePair | ECS_ENTITY_COMBO(obj, re))
 #define ECS_GET_PAIR_FIRST(e) (ECS_ENTITY_HI(e & ECS_COMPONENT_MASK))
 #define ECS_GET_PAIR_SECOND(e) (ECS_ENTITY_LOW(e))
+#define ECS_HAS_RELATION(e, rela) (ECS_HAS_ROLE(e, EcsRolePair) && ECS_GET_PAIR_FIRST(e) == rela)
 	
 	inline U64 EntityTypeHash(const EntityType& entityType)
 	{
@@ -125,6 +125,7 @@ namespace ECS
 		EntityInfo* entityInfo = nullptr;
 	};
 
+
 	///////////////////////////////////////////////////////////////
 	// Event
 
@@ -145,50 +146,50 @@ namespace ECS
 	////////////////////////////////////////////////////////////////////////////////
 
 	// Dual link list to manage TableRecords
-	struct CompTableCacheListNode
+	struct EntityTableCacheListNode
 	{
 		struct EntityTableCache* cache = nullptr;
 		EntityTable* table = nullptr;	// -> Owned table
 		bool empty = false;
-		CompTableCacheListNode* prev = nullptr;
-		CompTableCacheListNode* next = nullptr;
+		EntityTableCacheListNode* prev = nullptr;
+		EntityTableCacheListNode* next = nullptr;
 	};
 
-	struct CompTableCacheList
+	struct EntityTableCacheList
 	{
-		CompTableCacheListNode* first = nullptr;
-		CompTableCacheListNode* last = nullptr;
+		EntityTableCacheListNode* first = nullptr;
+		EntityTableCacheListNode* last = nullptr;
 		U32 count = 0;
 	};
 
-	struct CompTableCacheListIter
+	struct EntityTableCacheListIter
 	{
-		CompTableCacheListNode* cur = nullptr;
-		CompTableCacheListNode* next = nullptr;
-	};
-
-	struct CompTableRecord
-	{
-		CompTableCacheListNode header;
-		U64 compID = 0;
-		I32 column = 0;					// The column of comp in target table
-		I32 count = 0;
+		EntityTableCacheListNode* cur = nullptr;
+		EntityTableCacheListNode* next = nullptr;
 	};
 
 	struct EntityTableCache
 	{
-		Hashmap<CompTableCacheListNode*> tableRecordMap; // <TableID, CompTableRecord>
-		CompTableCacheList tables;
-		CompTableCacheList emptyTables;
+		Hashmap<EntityTableCacheListNode*> tableRecordMap; // <TableID, CompTableRecord>
+		EntityTableCacheList tables;
+		EntityTableCacheList emptyTables;
 
-		CompTableRecord* GetTableRecordFromCache(const EntityTable* table);
-		bool RemoveTableFromCache(EntityTable* table, CompTableCacheListNode* cacheNode);
+		struct CompTableRecord* GetTableRecordFromCache(const EntityTable* table);
+		bool RemoveTableFromCache(EntityTable* table, EntityTableCacheListNode* cacheNode);
 		void SetTableCacheState(EntityTable* table, bool isEmpty);
-		void InsertTableIntoCache(const EntityTable* table, CompTableCacheListNode* cacheNode);
+		void InsertTableIntoCache(const EntityTable* table, EntityTableCacheListNode* cacheNode);
 
 	private:
-		void RemoveTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node);
-		void InsertTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node);
+		void RemoveTableCacheNode(EntityTableCacheList& list, EntityTableCacheListNode* node);
+		void InsertTableCacheNode(EntityTableCacheList& list, EntityTableCacheListNode* node);
+	};
+
+	struct CompTableRecord
+	{
+		EntityTableCacheListNode header;
+		U64 compID = 0;
+		I32 column = 0;					// The column of comp in target table
+		I32 count = 0;
 	};
 
 	struct CompRecord
@@ -204,7 +205,7 @@ namespace ECS
 	{
 		QueryItem currentItem;
 		CompRecord* compRecord;
-		CompTableCacheListIter tableCacheIter;
+		EntityTableCacheListIter tableCacheIter;
 		EntityTable* table;
 		I32 curMatch;
 		I32 matchCount;
@@ -212,13 +213,41 @@ namespace ECS
 	};
 
 	const size_t QUERY_ITEM_SMALL_CACHE_SIZE = 4;
-	struct QueryInfo
+
+	// TODO: too heavy
+	struct QueryInst
 	{
 		U64 queryID;
 		QueryItem* queryItems;
 		Vector<QueryItem> queryItemsCache;
 		QueryItem queryItemSmallCache[QUERY_ITEM_SMALL_CACHE_SIZE];
 		I32 itemCount;
+		EntityTableCache tableCache;
+	};
+
+	struct QueryTableMatchListNode
+	{
+		struct QueryTableMatch* match = nullptr;
+		QueryTableMatchListNode* prev = nullptr;
+		QueryTableMatchListNode* next = nullptr;
+	};
+
+	struct QueryTableMatch
+	{
+		QueryTableMatchListNode node;
+		EntityTable* table = nullptr;
+		I32 itemCount = 0;
+		U64* componentIDs = nullptr;
+		U32* columns = nullptr;
+		size_t* sizes = nullptr;
+		QueryTableMatch* next = nullptr;
+	};
+
+	struct QueryTableCached
+	{
+		EntityTableCacheListNode header;
+		QueryTableMatch* first = nullptr;
+		QueryTableMatch* last = nullptr;
 	};
 
 	struct QueryIterImpl
@@ -345,7 +374,7 @@ namespace ECS
 		SystemAction action;
 		void* invoker;
 		InvokerDeleter invokerDeleter;
-		QueryInfo* query;
+		QueryInst* query;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -377,7 +406,7 @@ namespace ECS
 		TableGraphEdge* freeEdge = nullptr;
 
 		// Query
-		Util::SparseArray<QueryInfo> queryPool;
+		Util::SparseArray<QueryInst> queryPool;
 
 		bool isFini = false;
 
@@ -407,7 +436,7 @@ namespace ECS
 			size_t tabelCount = tablePool.Count();
 			for (size_t i = 1; i < tabelCount; i++)
 			{
-				EntityTable* table = tablePool.Get(i);
+				EntityTable* table = tablePool.GetByDense(i);
 				if (table != nullptr)
 					table->Release();
 			}
@@ -678,7 +707,7 @@ namespace ECS
 				sysComponent->invoker = desc.invoker;
 				sysComponent->invokerDeleter = desc.invokerDeleter;
 
-				QueryInfo* queryInfo = InitNewQuery(desc.query);
+				QueryInst* queryInfo = InitNewQuery(desc.query);
 				if (queryInfo == nullptr)
 					return INVALID_ENTITY;
 
@@ -712,7 +741,7 @@ namespace ECS
 
 		QueryID CreateQuery(const QueryCreateDesc& desc) override
 		{
-			QueryInfo* queryInfo = InitNewQuery(desc);
+			QueryInst* queryInfo = InitNewQuery(desc);
 			if (queryInfo == nullptr)
 				return INVALID_ENTITY;
 
@@ -721,19 +750,93 @@ namespace ECS
 
 		void DestroyQuery(QueryID queryID) override
 		{
-			QueryInfo* queryInfo = queryPool.Get(queryID);
+			QueryInst* queryInfo = queryPool.Get(queryID);
 			if (queryInfo == nullptr)
 				return;
 
 			FiniQuery(queryInfo);
 		}
 
-		QueryInfo* InitNewQuery(const QueryCreateDesc& desc)
+		QueryTableMatch* AddTableMatchForCache(QueryTableCached* cache)
 		{
-			QueryInfo* ret = queryPool.Requset();
+			QueryTableMatch* tableMatch = ECS_MALLOC_T(QueryTableMatch);
+			assert(tableMatch);
+			tableMatch->node.match = tableMatch;
+			if (cache->first == nullptr)
+			{
+				cache->first = tableMatch;
+				cache->last = tableMatch;
+			}
+			else
+			{
+				cache->last->next = tableMatch;
+				cache->last = tableMatch;
+			}
+		}
+
+		void QueryMatchTables(QueryInst* query)
+		{
+			auto MatchTable = [&](EntityTable* table)->bool
+			{
+				if (table->type.empty())
+					return false;
+
+				if (table->flags & TableFlagIsPrefab)
+					return false;
+
+				if (TableSearchType(table, TableFlagIsPrefab))
+					return false;
+
+				for (int i = 0; i < query->itemCount; i++)
+				{
+					QueryItem& item = query->queryItems[i];
+					if (!QueryItemMatchTable(table, item, nullptr, nullptr))
+						return false;
+				}
+				return true;
+			};
+
+			size_t tabelCount = tablePool.Count();
+			for (size_t i = 1; i < tabelCount; i++)
+			{
+				EntityTable* table = tablePool.GetByDense(i);
+				if (table == nullptr)
+					continue;
+
+				if (MatchTable(table))
+				{
+					// Add table into query cache
+					QueryTableCached* node = ECS_MALLOC_T(QueryTableCached);
+					assert(node != nullptr);
+					query->tableCache.InsertTableIntoCache(table, &node->header);
+
+					// Create new tableMatch
+					QueryTableMatch* tableMatch = AddTableMatchForCache(node);
+					assert(tableMatch);
+
+					I32 itemCount = query->itemCount;
+					if (itemCount > 0)
+					{
+
+					}
+					
+					for (int compIndex = 0; itemCount; compIndex++)
+					{
+
+					}
+				}
+			}
+		}
+
+		QueryInst* InitNewQuery(const QueryCreateDesc& desc)
+		{
+			FlushPendingTables();
+
+			QueryInst* ret = queryPool.Requset();
 			assert(ret != nullptr);
 			ret->queryID = queryPool.GetLastID();
 
+			// Create query items
 			I32 itemCount = 0;
 			for (int i = 0; i < MAX_QUERY_ITEM_COUNT; i++)
 			{
@@ -762,10 +865,17 @@ namespace ECS
 				ret->queryItems = itemPtr;
 			}
 		
+			// Create query cache
+			if (desc.cached)
+			{
+				// Match exsiting tables and add into cache
+				QueryMatchTables(ret);
+			}
+				
 			return ret;
 		}
 
-		void FiniQuery(QueryInfo* query)
+		void FiniQuery(QueryInst* query)
 		{
 			if (query == nullptr)
 				return;
@@ -778,7 +888,7 @@ namespace ECS
 			size_t queryCount = queryPool.Count();
 			for (size_t i = 0; i < queryCount; i++)
 			{
-				QueryInfo* query = queryPool.Get(i);
+				QueryInst* query = queryPool.Get(i);
 				FiniQuery(query);
 			}
 		}
@@ -787,7 +897,7 @@ namespace ECS
 		{
 			FlushPendingTables();
 
-			QueryInfo* info = queryPool.Get(queryID);
+			QueryInst* info = queryPool.Get(queryID);
 			if (info == nullptr)
 				return QueryIter();
 
@@ -836,25 +946,21 @@ namespace ECS
 			return ECS_MOV(iter);
 		}
 
-		bool QueryCheckItemMatchTableType(EntityTable* table, QueryItem& item, EntityID* outID, I32* outColumn)
+		bool QueryItemMatchTable(EntityTable* table, QueryItem& item, EntityID* outID, I32* outColumn)
 		{
-			CompRecord* compRecord = GetComponentRecord(item.compID);
-			if (compRecord == nullptr)
-				return false;
-
-			CompTableRecord* compTableRecord = compRecord->cache.GetTableRecordFromCache(table->storageTable);
-			if (compTableRecord == nullptr)
+			I32 column = TableSearchType(table, item.compID);
+			if (column == -1)
 				return false;
 
 			if (outID) 
 				*outID = item.compID;
 			if (outColumn) 
-				*outColumn = compTableRecord->column;
+				*outColumn = column;
 
 			return true;
 		}
 
-		bool QueryCheckItemsMatchTableType(EntityTable* table, QueryIter& iter, I32 pivotItem, Vector<EntityID>& ids, Vector<I32>& columns)
+		bool QueryIterMatchTable(EntityTable* table, QueryIter& iter, I32 pivotItem, Vector<EntityID>& ids, Vector<I32>& columns)
 		{
 			// Check current table includes all compsIDs from items
 			for (int i = 0; i < iter.itemCount; i++)
@@ -862,7 +968,7 @@ namespace ECS
 				if (i == pivotItem)
 					continue;
 
-				if (!QueryCheckItemMatchTableType(table, iter.items[i], &ids[i], &columns[i]))
+				if (!QueryItemMatchTable(table, iter.items[i], &ids[i], &columns[i]))
 					return false;
 			}
 
@@ -898,7 +1004,7 @@ namespace ECS
 						impl.columns[impl.pivotItemIndex] = impl.itemIter.column;
 					}
 
-					match = QueryCheckItemsMatchTableType(table, iter, impl.pivotItemIndex, impl.ids, impl.columns);
+					match = QueryIterMatchTable(table, iter, impl.pivotItemIndex, impl.ids, impl.columns);
 				}
 
 				if (!first && impl.matchingLeft > 0)
@@ -935,8 +1041,8 @@ namespace ECS
 				if (itemIter->compRecord == nullptr)
 					return nullptr;
 
-				CompTableCacheListIter& cacheIter = itemIter->tableCacheIter;
-				CompTableCacheListNode* next = cacheIter.next;
+				EntityTableCacheListIter& cacheIter = itemIter->tableCacheIter;
+				EntityTableCacheListNode* next = cacheIter.next;
 				if (next == nullptr)
 					return nullptr;
 
@@ -1413,6 +1519,18 @@ namespace ECS
 			return info->table;
 		}
 
+		I32 TableSearchType(EntityTable* table, EntityID compID)
+		{
+			if (table == nullptr)
+				return -1;
+
+			CompTableRecord* record = GetTableRecord(table, compID);
+			if (record == nullptr)
+				return -1;
+
+			return record->column;
+		}
+
 		EntityTable* FindOrCreateTableWithIDs(const Vector<EntityID>& compIDs)
 		{
 			auto it = tableTypeHashMap.find(EntityTypeHash(compIDs));
@@ -1431,7 +1549,8 @@ namespace ECS
 			if (prefabTable == nullptr)
 				return table;
 
-			for (int i = (prefabTable->type.size() - 1); i >= 0; i--)
+			I32 prefabTypeCount = (I32)(prefabTable->type.size() - 1);
+			for (int i = prefabTypeCount; i >= 0; i--)
 			{
 				EntityID compID = prefabTable->type[i];
 				if (ECS_HAS_ROLE(compID, EcsRoleShared))
@@ -1471,10 +1590,6 @@ namespace ECS
 			auto it = tableTypeHashMap.find(EntityTypeHash(entityType));
 			if (it != tableTypeHashMap.end())
 				return it->second;
-
-			// TEST
-			if (ECS_HAS_ROLE(compID, EcsRolePair))
-				int breakPoint = 0;
 
 			EntityTable* newTable = CreateNewTable(entityType);
 			assert(newTable);
@@ -1701,7 +1816,7 @@ namespace ECS
 			pendingTables.Clear();	// TODO
 		}
 
-		void ComputeTableDiff(EntityTable* t1, EntityTable* t2, TableGraphEdge* edge)
+		void ComputeTableDiff(EntityTable* t1, EntityTable* t2, TableGraphEdge* edge, EntityID compID)
 		{
 			if (t1 == t2)
 				return;
@@ -1735,7 +1850,10 @@ namespace ECS
 			addedCount += dstNumColumns - dstColumnIndex;
 			removedCount += srcNumColumns - srcColumnIndex;
 
-			trivialEdge &= (addedCount + removedCount) <= 1;
+			trivialEdge &= (addedCount + removedCount) <= 1 &&
+				(!ECS_HAS_RELATION(compID, EcsRelationIsA) 
+					&& !(t1->flags & TableFlagHasIsA) 
+					&& !(t2->flags & TableFlagHasIsA));
 			if (trivialEdge)
 			{
 				if (t1->storageTable != t2->storageTable)
@@ -1794,7 +1912,7 @@ namespace ECS
 					next->prev = &edge->listNode;
 
 				// Compute table diff (Call PopulateTableDiff to get all diffs)
-				ComputeTableDiff(from, to, edge);
+				ComputeTableDiff(from, to, edge, compID);
 			}
 		}
 
@@ -1810,8 +1928,6 @@ namespace ECS
 			EntityTableDiff* diff = edge->diff;
 			if (diff && diff != (&EMPTY_TABLE_DIFF))
 			{
-				assert(addID == INVALID_ENTITY);
-				assert(removeID == INVALID_ENTITY);
 				outDiff = *diff;
 			}
 			else
@@ -2010,7 +2126,7 @@ namespace ECS
 			{
 				for (int i = 0; i < tablePool.Count(); i++)
 				{
-					EntityTable* table = tablePool.Get(i);
+					EntityTable* table = tablePool.GetByDense(i);
 					NotifyTable(table, ent);
 				}
 			}
@@ -2034,7 +2150,7 @@ namespace ECS
 		return reinterpret_cast<CompTableRecord*>(it->second);
 	}
 
-	void EntityTableCache::InsertTableIntoCache(const EntityTable* table, CompTableCacheListNode* cacheNode)
+	void EntityTableCache::InsertTableIntoCache(const EntityTable* table, EntityTableCacheListNode* cacheNode)
 	{
 		assert(table != nullptr);
 		assert(cacheNode != nullptr);
@@ -2048,13 +2164,13 @@ namespace ECS
 		InsertTableCacheNode(empty ? emptyTables : tables, cacheNode);
 	}
 
-	bool EntityTableCache::RemoveTableFromCache(EntityTable* table, CompTableCacheListNode* cacheNode)
+	bool EntityTableCache::RemoveTableFromCache(EntityTable* table, EntityTableCacheListNode* cacheNode)
 	{
 		auto it = tableRecordMap.find(table->tableID);
 		if (it == tableRecordMap.end())
 			return false;
 
-		CompTableCacheListNode* node = it->second;
+		EntityTableCacheListNode* node = it->second;
 		if (node == nullptr)
 			return false;
 
@@ -2064,9 +2180,9 @@ namespace ECS
 		return true;
 	}
 
-	void EntityTableCache::InsertTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node)
+	void EntityTableCache::InsertTableCacheNode(EntityTableCacheList& list, EntityTableCacheListNode* node)
 	{
-		CompTableCacheListNode* last = list.last;
+		EntityTableCacheListNode* last = list.last;
 		list.last = node;
 		list.count++;
 		if (list.count == 1)
@@ -2079,7 +2195,7 @@ namespace ECS
 			last->next = node;
 	}
 
-	void EntityTableCache::RemoveTableCacheNode(CompTableCacheList& list, CompTableCacheListNode* node)
+	void EntityTableCache::RemoveTableCacheNode(EntityTableCacheList& list, EntityTableCacheListNode* node)
 	{
 		if (node->prev != nullptr)
 			node->prev->next = node->next;
@@ -2100,7 +2216,7 @@ namespace ECS
 		if (it == tableRecordMap.end())
 			return;
 
-		CompTableCacheListNode* node = it->second;
+		EntityTableCacheListNode* node = it->second;
 		if (node == nullptr)
 			return;
 
@@ -2546,6 +2662,9 @@ namespace ECS
 		{
 			CompTableRecord* tableRecord = &tableRecords[i];
 			EntityTableCache* cache = tableRecord->header.cache;
+			if (cache == nullptr)
+				continue;
+
 			cache->RemoveTableFromCache(storageTable, &tableRecord->header);
 
 			if (cache->tableRecordMap.empty())

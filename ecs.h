@@ -3,12 +3,6 @@
 #include "common.h"
 #include "ecs_util.h"
 
-// TODO
-// * singleton component
-// * event system
-// * work pipeline
-// * JjobSystem
-
 namespace ECS
 {
 	class World;
@@ -139,6 +133,7 @@ public:                                                   \
 	struct QueryCreateDesc
 	{
 		QueryItem items[MAX_QUERY_ITEM_COUNT];
+		bool cached = false; // is heavy
 	};
 
 	using InvokerDeleter = void(*)(void* ptr);
@@ -533,5 +528,5 @@ public:                                                   \
 		return SystemBuilder<Args...>(this);
 	}
 
-#include "ecs.inl"
+#include "ecs_reflect.inl"
 }

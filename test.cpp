@@ -82,8 +82,8 @@ TEST_CASE("System", "ECS")
     for (int i = 0; i < 500; i++)
     {
         world->CreateEntity((std::string("A") + std::to_string(i)).c_str())
-            .with<PositionComponent>()
-            .with<VelocityComponent>();
+            .With<PositionComponent>()
+            .With<VelocityComponent>();
     }
 
     ECS::EntityID system = world->CreateSystem<PositionComponent, VelocityComponent>()
@@ -108,3 +108,46 @@ TEST_CASE("SingletonComponent", "ECS")
     PositionComponent* c = world->GetSingletonComponent<PositionComponent>();
     CHECK(c->x == 2.0f);
 }
+
+TEST_CASE("Prefab", "ECS")
+{
+    // Default
+    std::unique_ptr<ECS::World> world = ECS::World::Create();
+    ECS::EntityID prefab = world->CreatePrefab("TestPrefab")
+        .With<PositionComponent>()
+        .With<VelocityComponent>()
+        .entity;
+
+    ECS::EntityID test1 = world->CreateEntity("Test1")
+        .Instantiate(prefab)
+        .With<TestComponent>().entity;
+
+    ECS::EntityID test2 = world->CreateEntity("Test2")
+        .Instantiate(prefab)
+        .With<TestComponent>().entity;
+
+    PositionComponent* pos1 = world->GetComponent<PositionComponent>(test1);
+    PositionComponent* pos2 = world->GetComponent<PositionComponent>(test2);
+    CHECK(pos1 != pos2);
+
+    pos1->x = 3.0f;
+    CHECK(pos1->x == world->GetComponent<PositionComponent>(test1)->x);
+    pos2->x = 2.0f;
+    CHECK(pos2->x == world->GetComponent<PositionComponent>(test2)->x);
+
+    // SharedComponent
+
+}
+//
+//int main()
+//{
+//    std::unique_ptr<ECS::World> world = ECS::World::Create();
+//    ECS::EntityID prefab = world->CreatePrefab("TestPrefab")
+//        .With<PositionComponent>()
+//        .With<VelocityComponent>()
+//        .entity;
+//
+//    world->CreateEntity("Test1").Instantiate(prefab);
+//
+//    return 0;
+//}
