@@ -1,6 +1,14 @@
 # ECS
-![image]("https://github.com/maoxiezhao/Cjing-ECS/blob/b4680d81d4465efa833517a5481be0cd7201d729/ECS_architecture.jpg")
-
+一个简易但是快速的Entity-component-system，基于Archetype的方式存储, 纯C++实现
+  
+Features:  
+* 基础的Entity,Component,Systems实现
+* Singleton component
+* Query
+* Tag
+* Prefab
+  
+ Example:  
 ```cpp
 struct PositionComponent
 {
