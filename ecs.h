@@ -532,6 +532,7 @@ public:                                                   \
 			desc.action = Invoker::Run;
 			desc.invoker = invoker;
 			desc.invokerDeleter = reinterpret_cast<InvokerDeleter>(ECS_DELETE_OBJECT<Invoker>);
+			desc.query.cached = true;
 			return world->InitNewSystem(desc);
 		}
 

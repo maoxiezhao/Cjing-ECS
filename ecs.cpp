@@ -139,11 +139,14 @@ namespace ECS
 		Util::List<EntityTableCacheItem> tables;
 		Util::List<EntityTableCacheItem> emptyTables;
 
+		void InsertTableIntoCache(const EntityTable* table, EntityTableCacheItem* cacheNode);
+		EntityTableCacheItem* RemoveTableFromCache(EntityTable* table);
+
 		EntityTableCacheIterator GetTableCacheListIter(bool emptyTable);
 		struct CompTableRecord* GetTableRecordFromCache(const EntityTable* table);
-		bool RemoveTableFromCache(EntityTable* table, EntityTableCacheItem* cacheNode);
 		void SetTableCacheState(EntityTable* table, bool isEmpty);
-		void InsertTableIntoCache(const EntityTable* table, EntityTableCacheItem* cacheNode);
+
+	private:
 		void RemoveTableCacheNode(EntityTableCacheItem* node, bool isEmpty);
 		void InsertTableCacheNode(EntityTableCacheItem* node, bool isEmpty);
 	};
@@ -235,10 +238,9 @@ namespace ECS
 		U64* componentIDs = nullptr;
 		I32* columns = nullptr;
 		size_t* sizes = nullptr;
-		QueryTableMatch* next = nullptr;
 	};
 
-	struct QueryTableCached
+	struct QueryTableCache
 	{
 		EntityTableCacheItem header;
 		QueryTableMatch* first = nullptr;
@@ -287,6 +289,7 @@ namespace ECS
 		I32 pivotItemIndex;
 		QueryImpl* query;
 
+		// TODO: use ptr to relace vector
 		Vector<EntityID> ids;
 		Vector<I32> columns;
 	};
@@ -338,6 +341,19 @@ namespace ECS
 	{
 		EntityTableEventType type = EntityTableEventType::Invalid;
 		EntityID compID = INVALID_ENTITY;
+	};
+
+	enum class QueryEventType
+	{
+		Invalid,
+		MatchTable,
+		UnmatchTable
+	};
+
+	struct QueryEvent
+	{
+		QueryEventType type = QueryEventType::Invalid;
+		EntityTable* table;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -750,9 +766,9 @@ namespace ECS
 			FiniQuery(queryInfo);
 		}
 
-		QueryTableMatch* QueryAddTableMatchForCache(QueryTableCached* cache)
+		QueryTableMatch* QueryAddTableMatchForCache(QueryTableCache* cache)
 		{
-			QueryTableMatch* tableMatch = ECS_MALLOC_T(QueryTableMatch);
+			QueryTableMatch* tableMatch = ECS_CALLOC_T(QueryTableMatch);
 			assert(tableMatch);
 			if (cache->first == nullptr)
 			{
@@ -769,12 +785,19 @@ namespace ECS
 
 		void QueryInsertTableMatchNode(QueryImpl* query, QueryTableMatch* node)
 		{
+			assert(node->prev == nullptr && node->next == nullptr);
 			Util::List<QueryTableMatch>& list = query->nonEmtpyTableList;
-			if (list.last != nullptr)
+			if (list.last)
 			{
 				Util::ListNode<QueryTableMatch>* last = list.last;
+				Util::ListNode<QueryTableMatch>* lastNext = last->next;
 				node->prev = last;
+				node->next = lastNext;
 				last->next = node;
+
+				if (lastNext != nullptr)
+					lastNext->prev = node;
+
 				list.last = node;
 			}
 			else
@@ -813,31 +836,98 @@ namespace ECS
 			query->matchingCount--;
 		}
 
+		bool QueryCheckTableMatched(QueryImpl* query, EntityTable* table)\
+		{
+			if (table->type.empty())
+				return false;
+
+			if (table->flags & TableFlagIsPrefab)
+				return false;
+
+			if (TableSearchType(table, EcsTagPrefab) != -1)
+				return false;
+
+			for (int i = 0; i < query->itemCount; i++)
+			{
+				QueryItem& item = query->queryItems[i];
+				if (!QueryItemMatchTable(table, item, nullptr, nullptr))
+					return false;
+			}
+
+			return true;
+		}
+
+		void QueryAddMatchedTable(QueryImpl* query, EntityTable* table)
+		{
+			// 1. Add to cache if table is matched
+			// 2. Add to non-empty-table list if table is non-emtpy
+
+			// Add table into query cache
+			QueryTableCache* node = ECS_CALLOC_T(QueryTableCache);
+			assert(node != nullptr);
+			query->matchedTableCache.InsertTableIntoCache(table, &node->header);
+
+			// Create new tableMatch
+			QueryTableMatch* tableMatch = QueryAddTableMatchForCache(node);
+			assert(tableMatch);
+			tableMatch->table = table;
+			tableMatch->itemCount = query->itemCount;
+			tableMatch->componentIDs = ECS_CALLOC_T_N(EntityID, query->itemCount);
+			assert(tableMatch->componentIDs);
+
+			tableMatch->columns = ECS_CALLOC_T_N(I32, query->itemCount);
+			assert(tableMatch->columns);
+
+			tableMatch->sizes = ECS_CALLOC_T_N(size_t, query->itemCount);
+			assert(tableMatch->sizes);
+
+			for (int t = 0; t < query->itemCount; t++)
+			{
+				EntityID compID = query->queryItems[t].compID;
+				if (compID != INVALID_ENTITY)
+				{
+					InfoComponent* compInfo = GetComponentInfo(compID);
+					if (compInfo)
+						tableMatch->sizes[t] = compInfo->size;
+					else
+						tableMatch->sizes[t] = 0;
+
+					//// Add one to the column, as column zero is reserved 
+					tableMatch->columns[t] = TableSearchType(table, compID);
+				}
+				else
+				{
+					tableMatch->sizes[t] = 0;
+					tableMatch->columns[t] = 0;
+				}
+
+				tableMatch->componentIDs[t] = compID;
+			}
+
+			// Insert to Non-emtpy-list if table is not empty
+			if (table->Count() != 0)
+				QueryInsertTableMatchNode(query, tableMatch);
+		}
+
+		void QueryMatchTable(QueryImpl* query, EntityTable* table)
+		{
+			if (QueryCheckTableMatched(query, table))
+				QueryAddMatchedTable(query, table);
+		}
+
+		void QueryUnmatchTable(QueryImpl* query, EntityTable* table)
+		{
+			EntityTableCacheItem* item = query->matchedTableCache.RemoveTableFromCache(table);
+			if (item != nullptr)
+				QueryFreeTableCache(query, item);
+		}
+
 		// Match exsiting tables for query
 		void QueryMatchTables(QueryImpl* query)
 		{
 			if (query->itemCount <= 0)
 				return;
 
-			auto MatchTable = [&](EntityTable* table)->bool
-			{
-				if (table->type.empty())
-					return false;
-
-				if (table->flags & TableFlagIsPrefab)
-					return false;
-
-				if (TableSearchType(table, EcsTagPrefab) != -1)
-					return false;
-
-				for (int i = 0; i < query->itemCount; i++)
-				{
-					QueryItem& item = query->queryItems[i];
-					if (!QueryItemMatchTable(table, item, nullptr, nullptr))
-						return false;
-				}
-				return true;
-			};
 
 			// Check all exsiting tables
 			size_t tabelCount = tablePool.Count();
@@ -847,58 +937,13 @@ namespace ECS
 				if (table == nullptr)
 					continue;
 
-				if (MatchTable(table))
-				{
-					// 1. Add to cache if table is matched
-					// 2. Add to non-empty-table list if table is non-emtpy
-
-					// Add table into query cache
-					QueryTableCached* node = ECS_MALLOC_T(QueryTableCached);
-					assert(node != nullptr);
-					query->matchedTableCache.InsertTableIntoCache(table, &node->header);
-
-					// Create new tableMatch
-					QueryTableMatch* tableMatch = QueryAddTableMatchForCache(node);
-					assert(tableMatch);
-					tableMatch->table = table;
-					tableMatch->itemCount = query->itemCount;
-					tableMatch->componentIDs = ECS_MALLOC_T_N(EntityID, query->itemCount);
-					assert(tableMatch->componentIDs);
-
-					tableMatch->columns = ECS_MALLOC_T_N(I32, query->itemCount);
-					assert(tableMatch->columns);
-
-					tableMatch->sizes = ECS_MALLOC_T_N(size_t, query->itemCount);
-					assert(tableMatch->sizes);
-
-					for (int t = 0; t < query->itemCount; t++)
-					{
-						EntityID compID = query->queryItems[t].compID;
-						if (compID != INVALID_ENTITY)
-						{
-							InfoComponent* compInfo = GetComponentInfo(compID);
-							if (compInfo)
-								tableMatch->sizes[t] = compInfo->size;
-							else
-								tableMatch->sizes[t] = 0;
-
-							// Add one to the column, as column zero is reserved 
-							tableMatch->columns[t] = TableSearchType(table, compID) + 1; 
-						}
-						else
-						{
-							tableMatch->sizes[t] = 0;
-							tableMatch->columns[t] = 0;
-						}
-
-						tableMatch->componentIDs[t] = compID;
-					}
-
-					// Insert to Non-emtpy-list if table is not empty
-					if (table->Count() != 0)
-						QueryInsertTableMatchNode(query, tableMatch);
-				}
+				QueryMatchTable(query, table);
 			}
+		}
+
+		// Rematch tables when tables are created or removed
+		void QueryRematchTables(QueryImpl* query)
+		{
 		}
 
 		QueryImpl* InitNewQuery(const QueryCreateDesc& desc)
@@ -949,6 +994,28 @@ namespace ECS
 			return ret;
 		}
 
+		void QueryFreeTableCache(QueryImpl*query, EntityTableCacheItem* node)
+		{
+			QueryTableCache* queryTable = reinterpret_cast<QueryTableCache*>(node);
+			Util::ListNode<QueryTableMatch>* cur, * next;
+			for (cur = queryTable->first; cur != nullptr; cur = next)
+			{
+				QueryTableMatch* match = cur->Cast();
+				ECS_FREE(match->componentIDs);
+				ECS_FREE(match->columns);
+				ECS_FREE(match->sizes);
+
+				// Remove Non-emtpy table
+				if (!queryTable->header.empty)
+					QueryRemoveTableMatchNode(query, match);
+
+				next = cur->next;
+				ECS_FREE(cur);
+			}
+
+			ECS_FREE(node);
+		}
+
 		void FiniQuery(QueryImpl* query)
 		{
 			if (query == nullptr)
@@ -956,36 +1023,15 @@ namespace ECS
 
 			if (query->cached)
 			{
-				auto FreeTableCache = [&](EntityTableCacheItem* node)
-				{
-					QueryTableCached* queryTable = reinterpret_cast<QueryTableCached*>(node);
-					QueryTableMatch* cur, *next;
-					for (cur = queryTable->first; cur != nullptr; cur = next)
-					{
-						ECS_FREE(cur->componentIDs);
-						ECS_FREE(cur->columns);
-						ECS_FREE(cur->sizes);
-
-						// Remove Non-emtpy table
-						if (!queryTable->header.empty)
-							QueryRemoveTableMatchNode(query, cur);
-
-						next = cur->next;
-						ECS_FREE(cur);
-					}
-
-					ECS_FREE(node);
-				};
-
 				// Free table cache 
 				EntityTableCacheItem* node = nullptr;
 				EntityTableCacheIterator iter = query->matchedTableCache.GetTableCacheListIter(false);
 				while (node = GetTableCacheListIterNext(iter))
-					FreeTableCache(node);
+					QueryFreeTableCache(query, node);
 
 				iter = query->matchedTableCache.GetTableCacheListIter(true);
 				while (node = GetTableCacheListIterNext(iter))
-					FreeTableCache(node);
+					QueryFreeTableCache(query, node);
 			}
 
 			queryPool.Remove(query->queryID);
@@ -1005,8 +1051,12 @@ namespace ECS
 		{
 			QueryIteratorImpl& impl = *iter.impl;
 			impl.query = query;
-			impl.matchIter.curTableMatch = query->nonEmtpyTableList.last;
+			impl.matchIter.curTableMatch = query->nonEmtpyTableList.first;
 			impl.matchIter.matchCount = query->matchingCount;
+
+			// TODO: remoev
+			impl.ids.resize(iter.itemCount);
+			impl.columns.resize(iter.itemCount);
 		}
 
 		void GetQueryIteratorByFilter(QueryImpl* query, QueryIterator& iter)
@@ -1048,6 +1098,8 @@ namespace ECS
 			impl.itemIter.compRecord = GetComponentRecord(impl.itemIter.currentItem.compID);
 			impl.itemIter.tableCacheIter.cur = nullptr;
 			impl.itemIter.tableCacheIter.next = impl.itemIter.compRecord->cache.tables.first;
+			
+			// TODO: remoev
 			impl.ids.resize(iter.itemCount);
 			impl.columns.resize(iter.itemCount);
 		}
@@ -1164,6 +1216,7 @@ namespace ECS
 			iter.entityCount = table->entities.size();
 			iter.entities = table->entities.data();
 			iter.compDatas.resize(iter.itemCount);
+
 			for (int i = 0; i < iter.itemCount; i++)
 			{
 				ComponentColumnData& columnData = table->storageColumns[impl.columns[i]];
@@ -1230,27 +1283,32 @@ namespace ECS
 			if (query->matchingCount <= 0)
 				return false;
 
+			bool ret = false;
 			QueryMatchIterator& matchIter = iter.impl->matchIter;
-			Util::ListNode<QueryTableMatch>* node = matchIter.curTableMatch;
-			if (node == nullptr)
-				return false;
-
-			QueryTableMatch* match = node->Cast();
-			if (match == nullptr)
-				return false;
-
-			for (int i = 0; i < match->itemCount; i++)
+			Util::ListNode<QueryTableMatch>* cur = matchIter.curTableMatch;
+			Util::ListNode<QueryTableMatch>* next = nullptr;
+			for (; cur != nullptr; cur = next)
 			{
-				impl.ids[i] = match->componentIDs[i];
-				impl.columns[i] = match->columns[i];
+				next = cur->next;
+
+				QueryTableMatch* match = cur->Cast();
+				if (match->table == nullptr)
+					continue;
+
+				for (int i = 0; i < match->itemCount; i++)
+				{
+					impl.ids[i] = match->componentIDs[i];
+					impl.columns[i] = match->columns[i];
+				}
+
+				// Populate table data
+				QueryPopulateTableData(iter, impl, match->table);
+				matchIter.curTableMatch = next;
+				ret = true;
+				break;
 			}
 
-			matchIter.curTableMatch = node->next;
-
-			// Populate table data
-			QueryPopulateTableData(iter, impl, match->table);
-
-			return true;
+			return ret;
 		}
 
 		bool QueryIteratorNext(QueryIterator& iter) override
@@ -1263,6 +1321,31 @@ namespace ECS
 				return QueryIteratorNextFromCache(iter);
 			else
 				return QueryIteratorNextByFilter(iter);
+		}
+
+		void NotifyQuery(QueryImpl* query, const QueryEvent& ent)
+		{
+			switch (ent.type)
+			{
+			case QueryEventType::MatchTable:
+				QueryMatchTable(query, ent.table);
+				break;
+			case QueryEventType::UnmatchTable:
+				QueryUnmatchTable(query, ent.table);
+				break;
+			}
+		}
+
+		void NotifyQueriss(const QueryEvent& ent)
+		{
+			for (int i = 1; i < queryPool.Count(); i++)
+			{
+				QueryImpl* query = queryPool.GetByDense(i);
+				if (query == nullptr)
+					continue;
+
+				NotifyQuery(query, ent);
+			}
 		}
 			
 		////////////////////////////////////////////////////////////////////////////////
@@ -1678,6 +1761,13 @@ namespace ECS
 			}
 
 			tableTypeHashMap[EntityTypeHash(entityType)] = ret;
+
+			// Queries need to rematch tables
+			QueryEvent ent = {};
+			ent.type = QueryEventType::MatchTable;
+			ent.table = ret;
+			NotifyQueriss(ent);
+
 			return ret;
 		}
 
@@ -2356,20 +2446,20 @@ namespace ECS
 		InsertTableCacheNode(cacheNode, empty);
 	}
 
-	bool EntityTableCache::RemoveTableFromCache(EntityTable* table, EntityTableCacheItem* cacheNode)
+	EntityTableCacheItem* EntityTableCache::RemoveTableFromCache(EntityTable* table)
 	{
 		auto it = tableRecordMap.find(table->tableID);
 		if (it == tableRecordMap.end())
-			return false;
+			return nullptr;
 
 		EntityTableCacheItem* node = it->second;
 		if (node == nullptr)
-			return false;
+			return nullptr;
 
 		RemoveTableCacheNode(node, node->empty);
 
 		tableRecordMap.erase(table->tableID);
-		return true;
+		return node;
 	}
 
 	void EntityTableCache::InsertTableCacheNode(EntityTableCacheItem* node, bool isEmpty)
@@ -2590,6 +2680,15 @@ namespace ECS
 		assert(isRoot || this->tableID != 0);
 		assert(refCount == 0);
 
+		// Queries need to rematch tables
+		if (!isRoot && !world->isFini)
+		{
+			QueryEvent ent = {};
+			ent.type = QueryEventType::UnmatchTable;
+			ent.table = this;
+			world->NotifyQueriss(ent);
+		}
+
 		// Fini data
 		FiniData(true, true);
 		
@@ -2608,7 +2707,8 @@ namespace ECS
 		if (storageTable != nullptr && storageTable != this)
 			storageTable->Release();
 
-		world->tablePool.Remove(tableID);
+		if (!world->isFini)
+			world->tablePool.Remove(tableID);
 	}
 
 	void EntityTable::FiniData(bool updateEntity, bool deleted)
@@ -2859,7 +2959,7 @@ namespace ECS
 			if (cache == nullptr)
 				continue;
 
-			cache->RemoveTableFromCache(storageTable, &tableRecord->header);
+			cache->RemoveTableFromCache(storageTable);
 
 			if (cache->tableRecordMap.empty())
 			{
