@@ -60,6 +60,27 @@ namespace Util
 
 #define PTR_OFFSET(o, offset) (void*)(((uintptr_t)(o)) + ((uintptr_t)(offset)))
 
+	template<typename T>
+	struct ListNode
+	{
+		ListNode<T>* prev = nullptr;
+		ListNode<T>* next = nullptr;
+
+		T* Cast()
+		{
+			return static_cast<T*>(this);
+		}
+	};
+
+	template<typename T>
+	struct List
+	{
+		using Node = typename ListNode<T>;
+		Node* first = nullptr;
+		Node* last = nullptr;
+		I32 count = 0;
+	};
+
     class StorageVector
     {
     private:

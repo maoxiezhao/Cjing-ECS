@@ -101,9 +101,9 @@ public:                                                   \
 		EntityID compID;
 	};
 
-	struct QueryIterImpl;
+	struct QueryIteratorImpl;
 	// TODO: remove impl
-	struct QueryIter
+	struct QueryIterator
 	{
 	public:
 		World* world = nullptr;
@@ -116,18 +116,18 @@ public:                                                   \
 		Vector<void*> compDatas;
 
 	public:
-		QueryIter();
-		~QueryIter();
-		QueryIter(QueryIter&& rhs)noexcept;
-		void operator=(QueryIter&& rhs)noexcept;
+		QueryIterator();
+		~QueryIterator();
+		QueryIterator(QueryIterator&& rhs)noexcept;
+		void operator=(QueryIterator&& rhs)noexcept;
 
-		QueryIter(const QueryIter& rhs) = delete;
-		void operator=(const QueryIter& rhs) = delete;
+		QueryIterator(const QueryIterator& rhs) = delete;
+		void operator=(const QueryIterator& rhs) = delete;
 
 	private:
 		friend class World;
 		friend struct WorldImpl; // TODO
-		QueryIterImpl* impl = nullptr;
+		QueryIteratorImpl* impl = nullptr;
 	};
 
 	struct QueryCreateDesc
@@ -137,7 +137,7 @@ public:                                                   \
 	};
 
 	using InvokerDeleter = void(*)(void* ptr);
-	using SystemAction = void(*)(QueryIter* iter);
+	using SystemAction = void(*)(QueryIterator* iter);
 
 	struct SystemCreateDesc
 	{
@@ -243,8 +243,8 @@ public:                                                   \
 		Query<Comps...> CreateQuery();
 		virtual QueryID CreateQuery(const QueryCreateDesc& desc) = 0;
 		virtual void DestroyQuery(QueryID queryID) = 0;
-		virtual QueryIter GetQueryIterator(QueryID queryID) = 0;
-		virtual bool QueryIteratorNext(QueryIter& iter) = 0;
+		virtual QueryIterator GetQueryIterator(QueryID queryID) = 0;
+		virtual bool QueryIteratorNext(QueryIterator& iter) = 0;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -360,16 +360,16 @@ public:                                                   \
 			using Array = std::array<void*, sizeof...(Comps)>;
 			Array compsArray;
 
-			void Populate(QueryIter* iter)
+			void Populate(QueryIterator* iter)
 			{
 				return PopulateImpl(iter, 0, static_cast<std::decay_t<Comps>*>(nullptr)...);
 			}
 
 		private:
-			void PopulateImpl(QueryIter* iter, size_t) { return; }
+			void PopulateImpl(QueryIterator* iter, size_t) { return; }
 
 			template<typename CompPtr, typename... Comps>
-			void PopulateImpl(QueryIter* iter, size_t index, CompPtr, Comps... comps)
+			void PopulateImpl(QueryIterator* iter, size_t index, CompPtr, Comps... comps)
 			{
 				compsArray[index] = static_cast<CompPtr>(iter->compDatas[index]);
 				return PopulateImpl(iter, index + 1, comps...);
@@ -389,7 +389,7 @@ public:                                                   \
 				func(func_) {}
 
 			// SystemCreateDesc.invoker => EachInvoker
-			static void Run(QueryIter* iter)
+			static void Run(QueryIterator* iter)
 			{
 				EachInvoker* invoker = static_cast<EachInvoker*>(iter->invoker);
 				assert(invoker != nullptr);
@@ -397,7 +397,7 @@ public:                                                   \
 			}
 
 			// Get entity and components for func
-			void Invoke(QueryIter* iter)
+			void Invoke(QueryIterator* iter)
 			{
 				CompTuple<Comps...> compTuple;
 				compTuple.Populate(iter);
@@ -407,7 +407,7 @@ public:                                                   \
 		private:
 
 			template<typename... Args, std::enable_if_t<sizeof...(Comps) == sizeof...(Args), int> = 0>
-			static void InvokeImpl(QueryIter* iter, const Func& func, size_t index, CompArray&, Args... comps)
+			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray&, Args... comps)
 			{
 				for (I32 row = 0; row < iter->entityCount; row++)
 				{
@@ -417,7 +417,7 @@ public:                                                   \
 			}
 
 			template<typename... Args, std::enable_if_t<sizeof...(Comps) != sizeof...(Args), int> = 0>
-			static void InvokeImpl(QueryIter* iter, const Func& func, size_t index, CompArray& compArr, Args... comps)
+			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray& compArr, Args... comps)
 			{
 				InvokeImpl(iter, func, index + 1, compArr, comps..., compArr[index]);
 			}
@@ -437,15 +437,27 @@ public:                                                   \
 			world(world_),
 			compIDs({ (ComponentTypeRegister<Comps>::ComponentID(*world_))... })
 		{
-			QueryCreateDesc desc = {};
 			for (int i = 0; i < compIDs.size(); i++)
 			{
 				QueryItem& item = desc.items[i];
 				item.compID = compIDs[i];
 			}
-			queryID = world->CreateQuery(desc);
 		}
 		Query() = delete;
+
+		Query& Build()
+		{
+			if (queryID > 0)
+				Free();
+
+			queryID = world->CreateQuery(desc);
+			return *this;
+		}
+
+		bool Valid()const 
+		{
+			return queryID > 0;
+		}
 
 		void Free()
 		{
@@ -456,11 +468,17 @@ public:                                                   \
 			}
 		}
 
+		Query& Cached()
+		{
+			desc.cached = true;
+			return *this;
+		}
+
 		template<typename Func>
 		void ForEach(Func&& func)
 		{
 			using Invoker = typename _::EachInvoker<typename std::decay_t<Func>, Comps...>;
-			QueryIter iter = world->GetQueryIterator(queryID);
+			QueryIterator iter = world->GetQueryIterator(queryID);
 			while (world->QueryIteratorNext(iter))
 				Invoker(ECS_FWD(func)).Invoke(&iter);
 		}
@@ -468,7 +486,8 @@ public:                                                   \
 	private:
 		World* world;
 		std::array<U64, sizeof...(Comps)> compIDs;
-		QueryID queryID;
+		QueryID queryID = 0;
+		QueryCreateDesc desc = {};
 	};
 
 	template<typename... Comps>
