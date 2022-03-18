@@ -68,8 +68,7 @@ namespace ECS
 	////////////////////////////////////////////////////////////////////////////////
 	//// Entity info
 	////////////////////////////////////////////////////////////////////////////////
-	// 
-	// EntityID <-> EntityInfo
+
 	struct EntityInfo
 	{
 		EntityTable* table = nullptr;
@@ -159,62 +158,6 @@ namespace ECS
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
-	//// EntityTable
-	////////////////////////////////////////////////////////////////////////////////
-
-	enum TableFlag
-	{
-		TableFlagIsPrefab = 1 << 0,
-		TableFlagHasIsA = 1 << 1,
-	};
-
-	struct ComponentColumnData
-	{
-		Util::StorageVector data;    // Column element data
-		I64 size = 0;                // Column element size
-		I64 alignment = 0;           // Column element alignment
-	};
-
-	// Archetype table for entity, archtype is a set of componentIDs
-	struct EntityTable
-	{
-	public:
-		WorldImpl* world = nullptr;
-		U64 tableID = 0;
-		TableGraphNode graphNode;
-		bool isInitialized = false;
-		U32 flags = 0;
-		I32 refCount = 0;
-
-		EntityType type;
-		EntityType storageType;
-		Vector<I32> typeToStorageMap;
-		Vector<I32> storageToTypeMap;
-
-		EntityTable* storageTable = nullptr;		// Without tags
-		Vector<EntityID> entities;
-		Vector<EntityInfo*> entityInfos;
-		Vector<ComponentColumnData> storageColumns; // Comp1,         Comp2,         Comp3
-		Vector<ComponentTypeInfo*> compTypeInfos;   // CompTypeInfo1, CompTypeInfo2, CompTypeInfo3
-		Vector<CompTableRecord> tableRecords;       // CompTable1,    CompTable2,    CompTable3
-
-		bool InitTable(WorldImpl* world_);
-		void Claim();
-		void Release();
-		void Free();
-		void FiniData(bool updateEntity, bool deleted);
-		void DeleteEntity(U32 index, bool destruct);
-		void RemoveColumnLast();
-		void RemoveColumn(U32 index);
-		void GrowColumn(Vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
-		U32  AppendNewEntity(EntityID entity, EntityInfo* info, bool construct);
-		void RegisterTableRecords();
-		void UnregisterTableRecords();
-		bool RegisterComponentRecord(EntityID compID, I32 column, I32 count, CompTableRecord& tableRecord);
-		size_t Count()const;
-	};
-
-	////////////////////////////////////////////////////////////////////////////////
 	//// Query
 	////////////////////////////////////////////////////////////////////////////////
 
@@ -269,32 +212,44 @@ namespace ECS
 		Util::ListNode<QueryTableMatch>* curTableMatch;
 	};
 
+	const int MAX_QUERY_ITER_IMPL_CACHE_SIZE = 4;
+
+	struct QueryIteratorImplCache
+	{
+		EntityID ids[MAX_QUERY_ITER_IMPL_CACHE_SIZE];
+		I32 columns[MAX_QUERY_ITER_IMPL_CACHE_SIZE];
+		bool compIDsAlloc;
+		bool columnsAlloc;
+	};
+
 	struct QueryIteratorImpl
 	{
 		QueryItemIterator itemIter;
 		QueryMatchIterator matchIter;
-
 		I32 matchingLeft;
 		I32 pivotItemIndex;
 		QueryImpl* query;
 
-		// TODO: use ptr to relace vector
-		Vector<EntityID> ids;
-		Vector<I32> columns;
+		EntityID* compIDs;
+		I32* columns;
+		QueryIteratorImplCache cache;
 	};
 
 	QueryIterator::QueryIterator()
 	{
-		impl = ECS_MALLOC_T(QueryIteratorImpl);
+		impl = ECS_CALLOC_T(QueryIteratorImpl);
 		assert(impl);
-		new (impl) QueryIteratorImpl();
 	}
 
 	QueryIterator::~QueryIterator()
 	{
 		if (impl != nullptr)
 		{
-			impl->~QueryIteratorImpl();
+			if (impl->cache.compIDsAlloc)
+				ECS_FREE(impl->compIDs);
+			if (impl->cache.columnsAlloc)
+				ECS_FREE(impl->columns);
+
 			ECS_FREE(impl);
 		}
 	}
@@ -371,6 +326,62 @@ namespace ECS
 		void* invoker;
 		InvokerDeleter invokerDeleter;
 		QueryImpl* query;
+	};
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// EntityTable
+	////////////////////////////////////////////////////////////////////////////////
+
+	enum TableFlag
+	{
+		TableFlagIsPrefab = 1 << 0,
+		TableFlagHasIsA = 1 << 1,
+	};
+
+	struct ComponentColumnData
+	{
+		Util::StorageVector data;    // Column element data
+		I64 size = 0;                // Column element size
+		I64 alignment = 0;           // Column element alignment
+	};
+
+	// Archetype table for entity, archtype is a set of componentIDs
+	struct EntityTable
+	{
+	public:
+		WorldImpl* world = nullptr;
+		U64 tableID = 0;
+		TableGraphNode graphNode;
+		bool isInitialized = false;
+		U32 flags = 0;
+		I32 refCount = 0;
+
+		EntityType type;
+		EntityType storageType;
+		Vector<I32> typeToStorageMap;
+		Vector<I32> storageToTypeMap;
+
+		EntityTable* storageTable = nullptr;		// Without tags
+		Vector<EntityID> entities;
+		Vector<EntityInfo*> entityInfos;
+		Vector<ComponentColumnData> storageColumns; // Comp1,         Comp2,         Comp3
+		Vector<ComponentTypeInfo*> compTypeInfos;   // CompTypeInfo1, CompTypeInfo2, CompTypeInfo3
+		Vector<CompTableRecord> tableRecords;       // CompTable1,    CompTable2,    CompTable3
+
+		bool InitTable(WorldImpl* world_);
+		void Claim();
+		void Release();
+		void Free();
+		void FiniData(bool updateEntity, bool deleted);
+		void DeleteEntity(U32 index, bool destruct);
+		void RemoveColumnLast();
+		void RemoveColumn(U32 index);
+		void GrowColumn(Vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct);
+		U32  AppendNewEntity(EntityID entity, EntityInfo* info, bool construct);
+		void RegisterTableRecords();
+		void UnregisterTableRecords();
+		bool RegisterComponentRecord(EntityID compID, I32 column, I32 count, CompTableRecord& tableRecord);
+		size_t Count()const;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -930,11 +941,7 @@ namespace ECS
 			}
 		}
 
-		// Rematch tables when tables are created or removed
-		void QueryRematchTables(QueryImpl* query)
-		{
-		}
-
+		// Create a new query
 		QueryImpl* InitNewQuery(const QueryCreateDesc& desc)
 		{
 			FlushPendingTables();
@@ -1042,10 +1049,6 @@ namespace ECS
 			impl.query = query;
 			impl.matchIter.curTableMatch = query->nonEmtpyTableList.first;
 			impl.matchIter.matchCount = query->matchingCount;
-
-			// TODO: remoev
-			impl.ids.resize(iter.itemCount);
-			impl.columns.resize(iter.itemCount);
 		}
 
 		void GetQueryIteratorByFilter(QueryImpl* query, QueryIterator& iter)
@@ -1087,10 +1090,6 @@ namespace ECS
 			impl.itemIter.compRecord = GetComponentRecord(impl.itemIter.currentItem.compID);
 			impl.itemIter.tableCacheIter.cur = nullptr;
 			impl.itemIter.tableCacheIter.next = impl.itemIter.compRecord->cache.tables.first;
-			
-			// TODO: remoev
-			impl.ids.resize(iter.itemCount);
-			impl.columns.resize(iter.itemCount);
 		}
 
 		QueryIterator GetQueryIterator(QueryID queryID) override
@@ -1128,7 +1127,7 @@ namespace ECS
 			return true;
 		}
 
-		bool QueryIterMatchTable(EntityTable* table, QueryIterator& iter, I32 pivotItem, Vector<EntityID>& ids, Vector<I32>& columns)
+		bool QueryIterMatchTable(EntityTable* table, QueryIterator& iter, I32 pivotItem, EntityID* ids, I32* columns)
 		{
 			// Check current table includes all compsIDs from items
 			for (int i = 0; i < iter.itemCount; i++)
@@ -1213,10 +1212,44 @@ namespace ECS
 			}
 		}
 
+		void QueryIteratorInit(QueryIterator& iter)
+		{
+			QueryIteratorImpl& impl = *iter.impl;
+			// Component ids
+			if (impl.compIDs == nullptr)
+			{
+				if (iter.itemCount > MAX_QUERY_ITER_IMPL_CACHE_SIZE)
+				{
+					impl.compIDs = ECS_CALLOC_T_N(EntityID, iter.itemCount);
+					impl.cache.compIDsAlloc = true;
+				}
+				else
+				{
+					impl.compIDs = impl.cache.ids;
+				}
+			}
+
+			// Columns
+			if (impl.columns == nullptr)
+			{
+				if (iter.itemCount > MAX_QUERY_ITER_IMPL_CACHE_SIZE)
+				{
+					impl.columns = ECS_CALLOC_T_N(I32, iter.itemCount);
+					impl.cache.columnsAlloc = true;
+				}
+				else
+				{
+					impl.columns = impl.cache.columns;
+				}
+			}
+		}
+
 		bool QueryIteratorNextByFilter(QueryIterator& iter)
 		{
 			// Find current talbe
 			// According the node graph to find the next table
+
+			QueryIteratorInit(iter);
 
 			QueryIteratorImpl& impl = *iter.impl;
 			EntityTable* table = nullptr;
@@ -1235,11 +1268,11 @@ namespace ECS
 
 					if (impl.pivotItemIndex != -1)
 					{
-						impl.ids[impl.pivotItemIndex] = impl.itemIter.currentItem.compID;
+						impl.compIDs[impl.pivotItemIndex] = impl.itemIter.currentItem.compID;
 						impl.columns[impl.pivotItemIndex] = impl.itemIter.column;
 					}
 
-					match = QueryIterMatchTable(table, iter, impl.pivotItemIndex, impl.ids, impl.columns);
+					match = QueryIterMatchTable(table, iter, impl.pivotItemIndex, impl.compIDs, impl.columns);
 				}
 
 				if (!first && impl.matchingLeft > 0)
@@ -1284,11 +1317,8 @@ namespace ECS
 				if (match->table == nullptr)
 					continue;
 
-				for (int i = 0; i < match->itemCount; i++)
-				{
-					impl.ids[i] = match->componentIDs[i];
-					impl.columns[i] = match->columns[i];
-				}
+				impl.compIDs = match->componentIDs;
+				impl.columns = match->columns;
 
 				// Populate table data
 				QueryPopulateTableData(iter, impl, match->table);
