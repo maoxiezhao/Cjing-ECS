@@ -1,6 +1,6 @@
 # ECS
-Cjing-ECS is a lightweight and fast ECS
-一个简易但是快速的Entity-component-system，基于Archetype的方式存储, 纯C++实现
+Cjing-ECS is a lightweight and fast ECS  
+一个轻量、快速的Entity-component-system，基于Archetype的方式存储, 纯C++实现
   
 Features:  
 * basic entity, component, system
