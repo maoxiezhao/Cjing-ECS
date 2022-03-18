@@ -55,3 +55,4 @@ int main()
     return 0;
 }
 ```
+![image](https://github.com/maoxiezhao/Cjing-ECS/blob/master/ECS_architecture.jpg)
