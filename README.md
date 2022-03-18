@@ -1,8 +1,10 @@
 # ECS
+Cjing-ECS is a lightweight and fast ECS
 一个简易但是快速的Entity-component-system，基于Archetype的方式存储, 纯C++实现
   
 Features:  
-* 基础的Entity,Component,Systems实现
+* basic entity, component, system
+* Archetype storage 
 * Singleton component
 * Query
 * Tag
@@ -27,6 +29,14 @@ struct VelocityComponent
 int main()
 {
     std::unique_ptr<ECS::World> world = ECS::World::Create();
+    ECS::EntityID prefab = world->CreatePrefab("TestPrefab")
+        .With<PositionComponent>()
+        .With<VelocityComponent>()
+        .entity;
+
+    ECS::EntityID test1 = world->CreateEntity("Test1")
+        .Instantiate(prefab);
+    
     world->CreateEntity("a1")
         .with<PositionComponent>()
         .with<VelocityComponent>();
