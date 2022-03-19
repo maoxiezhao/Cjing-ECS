@@ -229,7 +229,7 @@ public:                                                   \
 		virtual bool HasComponentTypeAction(EntityID compID)const = 0;
 		virtual ComponentTypeInfo* GetComponentTypInfo(EntityID compID) = 0;
 		virtual const ComponentTypeInfo* GetComponentTypInfo(EntityID compID)const = 0;
-		virtual void SetComponentAction(EntityID compID, const Reflect::ReflectInfo& info) = 0;
+		virtual void SetComponentTypeInfo(EntityID compID, const Reflect::ReflectInfo& info) = 0;
 		virtual EntityID InitNewComponent(const ComponentCreateDesc& desc) = 0;
 		virtual void* GetOrCreateComponent(EntityID entity, EntityID compID) = 0;
 		virtual void AddComponent(EntityID entity, EntityID compID) = 0;
@@ -759,7 +759,7 @@ public:                                                   \
 				info.move = Move<T>();
 				info.copyCtor = CopyCtor<T>();
 				info.moveCtor = MoveCtor<T>();
-				world.SetComponentAction(compID, info);
+				world.SetComponentTypeInfo(compID, info);
 			}
 		}
 

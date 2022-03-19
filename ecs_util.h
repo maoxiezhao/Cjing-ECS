@@ -387,6 +387,17 @@ namespace Util
 			return Get(dense, denseArray[dense]);
 		}
 
+		U64 GetAliveIndex(U64 index)
+		{
+			Chunk* chunk = GetChunk(GetChunkIndexFromIndex(index));
+			if (chunk == nullptr)
+				return 0;
+
+			size_t offset = GetOffsetFromIndex(index);
+			size_t dense = chunk->sparse[offset];
+			return denseArray[dense];
+		}
+
 		T* Get(size_t dense, U64 index)
 		{
 			Chunk* chunk = GetChunk(GetChunkIndexFromIndex(index));
