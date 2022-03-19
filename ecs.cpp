@@ -41,6 +41,9 @@ namespace ECS
 	// Relations
 	const EntityID EcsRelationIsA = HiComponentID + 1;
 
+	// properties
+	const EntityID EcsPropertyTag = HiComponentID + 2;
+
 #define ECS_ENTITY_MASK               (0xFFFFffffull)	// 32
 #define ECS_ROLE_MASK                 (0xFFull << 56)
 #define ECS_COMPONENT_MASK            (~ECS_ROLE_MASK)	// 56
@@ -144,7 +147,7 @@ namespace ECS
 
 	struct EntityTableCache
 	{
-		Hashmap<EntityTableCacheItem*> tableRecordMap; // <TableID, TableComponentRecord>
+		Hashmap<EntityTableCacheItem*> tableRecordMap; // <TableID, CacheItem>
 		Util::List<EntityTableCacheItem> tables;
 		Util::List<EntityTableCacheItem> emptyTables;
 	};
@@ -155,8 +158,7 @@ namespace ECS
 
 	struct ComponentRecord
 	{
-		EntityTableCache cache;
-		U64 recordID;
+		EntityTableCache cache;			// TableComponentRecords
 		bool typeInfoInited = false;
 		ComponentTypeInfo* typeInfo = nullptr;
 	};
@@ -218,7 +220,7 @@ namespace ECS
 
 		bool InitTable(WorldImpl* world_);
 		void Claim();
-		void Release();
+		bool Release();
 		void Free();
 		void FiniData(bool updateEntity, bool deleted);
 		void DeleteEntity(U32 index, bool destruct);
@@ -267,7 +269,7 @@ namespace ECS
 		QueryItem queryItemSmallCache[QUERY_ITEM_SMALL_CACHE_SIZE];
 		I32 itemCount;
 
-		EntityTableCache matchedTableCache;			   // All matched tables
+		EntityTableCache matchedTableCache;			   // All matched tables <QueryTableCache>
 		Util::List<QueryTableMatch> nonEmtpyTableList; // Non-empty tables
 
 		I32 matchingCount = 0;
@@ -417,7 +419,6 @@ namespace ECS
 
 		// Component
 		Hashmap<ComponentRecord*> compRecordMap;
-		Util::SparseArray<ComponentRecord> compRecordPool;
 		Util::SparseArray<ComponentTypeInfo> compTypePool;	// Component reflect type info
 
 		// Graph
@@ -445,7 +446,6 @@ namespace ECS
 			InitBuiltinComponents();
 			InitBuiltinTags();
 			InitSystemComponent();
-			RegisterBuiltinComponents();
 		}
 
 		~WorldImpl()
@@ -476,6 +476,9 @@ namespace ECS
 
 			// Fini all queries
 			FiniQueries();
+
+			// Fini component records
+			FiniComponentRecords();
 
 			// Clear entity pool
 			entityPool.Clear();
@@ -592,7 +595,11 @@ namespace ECS
 			if (info == nullptr || info->table == nullptr)
 				return nullptr;
 
-			TableComponentRecord* tableRecord = GetTableRecord(info->table, compID);
+			EntityTable* table = info->table;
+			if (table->storageTable == nullptr)
+				return nullptr;
+
+			TableComponentRecord* tableRecord = GetTableRecord(table->storageTable, compID);
 			if (tableRecord == nullptr)
 				return nullptr;
 
@@ -601,7 +608,12 @@ namespace ECS
 
 		bool HasComponent(EntityID entity, EntityID compID) override
 		{
-			return GetComponent(entity, compID) != nullptr;
+			assert(compID != INVALID_ENTITY);
+			EntityTable* table = GetTable(entity);
+			if (table == nullptr)
+				return false;
+
+			return TableSearchType(table, compID) != -1;
 		}
 
 		void AddRelation(EntityID entity, EntityID relation, EntityID compID)override
@@ -1458,24 +1470,60 @@ namespace ECS
 
 			return true;
 		}
-		
-		ComponentRecord* EnsureCompRecord(EntityID id)
+
+		ComponentRecord* CreateComponentRecord(EntityID compID)
 		{
-			auto it = compRecordMap.find(StripGeneration(id));
+			return ECS_NEW_OBJECT<ComponentRecord>();
+		}
+
+		bool FreeComponentRecord(ComponentRecord* record)
+		{
+			// There are still tables in non-empty list
+			if (record->cache.tables.count > 0)
+				return false;
+
+			// No more tables in this record, free it
+			if (record->cache.emptyTables.count == 0)
+			{
+				ECS_DELETE_OBJECT(record);
+				return true;
+			}
+		
+			// Release empty tables
+			EntityTableCacheIterator cacheIter = GetTableCacheListIter(&record->cache, true);
+			TableComponentRecord* tableRecord = nullptr;
+			while (tableRecord = (TableComponentRecord*)(GetTableCacheListIterNext(cacheIter)))
+			{
+				if (!tableRecord->header.table->Release())
+					return false;
+			}
+
+			return true;
+		}
+		
+		ComponentRecord* EnsureComponentRecord(EntityID compID)
+		{
+			auto it = compRecordMap.find(StripGeneration(compID));
 			if (it != compRecordMap.end())
 				return it->second;
 
-			ComponentRecord* ret = compRecordPool.Requset();
-			ret->recordID = compRecordPool.GetLastID();
-			compRecordMap[StripGeneration(id)] = ret;
+			ComponentRecord* ret = CreateComponentRecord(compID);
+			compRecordMap[StripGeneration(compID)] = ret;
 			return ret;
 		}
 
-		void RemoveCompRecord(EntityID id, ComponentRecord* compRecord)
+		void RemoveComponentRecord(EntityID id, ComponentRecord* compRecord)
 		{
-			ComponentRecord record = *compRecord;
-			compRecordPool.Remove(compRecord->recordID);
-			compRecordMap.erase(StripGeneration(id));
+			if (FreeComponentRecord(compRecord))
+				compRecordMap.erase(StripGeneration(id));
+		}
+
+		void FiniComponentRecords()
+		{
+			for (auto kvp : compRecordMap)
+				FreeComponentRecord(kvp.second);
+			
+			compRecordMap.clear();
 		}
 
 		bool CheckEntityTypeHasComponent(EntityType& entityType, EntityID compID)
@@ -1557,6 +1605,11 @@ namespace ECS
 			{
 				EntityID relation = ECS_GET_PAIR_FIRST(compID);
 				relation = GetAliveEntity(relation);
+
+				// Tag dose not have type info, return zero
+				if (HasComponent(relation, EcsPropertyTag))
+					return INVALID_ENTITY;
+
 				InfoComponent* info = GetComponentInfo(relation);
 				if (info && info->size != 0)
 					return relation;
@@ -1591,12 +1644,12 @@ namespace ECS
 		// Create component record for table
 		bool RegisterComponentRecord(EntityTable* table, EntityID compID, I32 column, I32 count, TableComponentRecord& tableRecord)
 		{
-			compID = StripGeneration(compID);
-
 			// Register component and init component type info
-			ComponentRecord* compRecord = EnsureCompRecord(compID);
+			ComponentRecord* compRecord = EnsureComponentRecord(compID);
 			assert(compRecord != nullptr);
 			InsertTableIntoCache(&compRecord->cache, table, &tableRecord.header);
+
+			// Init component type info
 			if (!compRecord->typeInfoInited)
 			{
 				EntityID type = GetTypeID(compID);
@@ -1614,13 +1667,6 @@ namespace ECS
 			tableRecord.count = count;
 
 			return true;
-		}
-
-		// Builtin components
-		void RegisterBuiltinComponents()
-		{
-			ComponentTypeRegister<InfoComponent>::RegisterComponent(*this);
-			ComponentTypeRegister<NameComponent>::RegisterComponent(*this);
 		}
 
 		template<typename C>
@@ -1696,6 +1742,9 @@ namespace ECS
 
 			lastComponentID = FirstUserComponentID;
 			lastID = FirstUserEntityID;
+
+			ComponentTypeRegister<InfoComponent>::RegisterComponent(*this);
+			ComponentTypeRegister<NameComponent>::RegisterComponent(*this);
 		}
 
 		void InitBuiltinTags()
@@ -1716,6 +1765,12 @@ namespace ECS
 
 			// Relation
 			InitTag(EcsRelationIsA, "EcsRelationIsA");
+
+			// Property
+			InitTag(EcsPropertyTag, "EcsPropertyTag");
+
+			// RelationIsA has peropty of tag
+			AddComponent(EcsRelationIsA, EcsPropertyTag);
 		}
 
 		void InitSystemComponent()
@@ -1774,7 +1829,11 @@ namespace ECS
 		{
 			assert(compID != 0);
 			assert(row >= 0);
-			TableComponentRecord* tableRecord = GetTableRecord(&table, compID);
+
+			if (table.storageTable == nullptr)
+				return nullptr;
+
+			TableComponentRecord* tableRecord = GetTableRecord(table.storageTable, compID);
 			if (tableRecord == nullptr)
 				return nullptr;
 
@@ -2053,7 +2112,7 @@ namespace ECS
 			if (compRecord == nullptr)
 				return nullptr;
 
-			return GetTableRecordFromCache(&compRecord->cache, table->storageTable);
+			return GetTableRecordFromCache(&compRecord->cache, table);
 		}
 		
 		I32 MoveTableEntity(EntityID entity, EntityInternalInfo* info, EntityTable* srcTable, EntityTable* dstTable, EntityTableDiff& diff, bool construct)
@@ -2100,7 +2159,13 @@ namespace ECS
 				}
 				else
 				{
-					// DeleteEntityFromTable(srcTable, info->row, diff);
+					srcTable->DeleteEntity(info->row, true);
+					EntityInfo* entityInfo = entityPool.Get(entity);
+					if (entityInfo)
+					{
+						entityInfo->table = nullptr;
+						entityInfo->row = 0;
+					}
 				}
 			}
 			else
@@ -2663,11 +2728,15 @@ namespace ECS
 		refCount++;
 	}
 
-	void EntityTable::Release()
+	bool EntityTable::Release()
 	{
 		assert(refCount > 0);
 		if (--refCount == 0)
+		{
 			Free();
+			return true;
+		}
+		return false;
 	}
 
 	void EntityTable::Free()
@@ -2693,12 +2762,12 @@ namespace ECS
 
 		if (!isRoot)
 		{
-			//  Unregister table
-			UnregisterTableRecords();
-
 			// Remove from hashMap
 			world->tableTypeHashMap.erase(EntityTypeHash(type));
 		}
+
+		//  Unregister table
+		UnregisterTableRecords();
 
 		// Decrease the ref coung of the storage table
 		if (storageTable != nullptr && storageTable != this)
@@ -2982,12 +3051,14 @@ namespace ECS
 			if (cache == nullptr)
 				continue;
 
-			world->RemoveTableFromCache(cache, storageTable);
+			assert(tableRecord->header.table == this);
+
+			world->RemoveTableFromCache(cache, this);
 
 			if (cache->tableRecordMap.empty())
 			{
 				ComponentRecord* compRecord = reinterpret_cast<ComponentRecord*>(cache);
-				world->RemoveCompRecord(tableRecord->compID, compRecord);
+				world->RemoveComponentRecord(tableRecord->compID, compRecord);
 			}
 		}
 		tableRecords.clear();
