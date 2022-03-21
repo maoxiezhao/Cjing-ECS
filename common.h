@@ -33,9 +33,7 @@ using Vector = std::vector<Value>;
 
 #define ECS_MOV(...) static_cast<std::remove_reference_t<decltype(__VA_ARGS__)>&&>(__VA_ARGS__)
 #define ECS_FWD(...) static_cast<decltype(__VA_ARGS__)&&>(__VA_ARGS__)
-
-#define ASSERT(...) assert(__VA_ARGS__)
-
+#define ECS_ASSERT(...) assert(__VA_ARGS__)
 #define ECS_HAS_FLAG(flags, flag) (flags & (U32)flag)
 
 template<typename T, typename... Args>
