@@ -213,6 +213,12 @@ public:                                                   \
 		}
 
 		template<typename C>
+		void RemoveComponent(EntityID entity)
+		{
+			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
+		}
+
+		template<typename C>
 		void RegisterComponent()
 		{
 			ComponentTypeRegister<C>::ComponentID(*this);
@@ -233,6 +239,7 @@ public:                                                   \
 		virtual EntityID InitNewComponent(const ComponentCreateDesc& desc) = 0;
 		virtual void* GetOrCreateComponent(EntityID entity, EntityID compID) = 0;
 		virtual void AddComponent(EntityID entity, EntityID compID) = 0;
+		virtual void RemoveComponent(EntityID entity, EntityID compID) = 0;
 
 		template<typename... Args>
 		SystemBuilder<Args...> CreateSystem();

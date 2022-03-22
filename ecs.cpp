@@ -1,7 +1,6 @@
 ﻿#include "ecs.h"
 
 // TODO
-// 0. Remove components from a entity
 // 1. hierarchy
 // 2. Query refactor
 // 3. Table merage
@@ -736,6 +735,18 @@ namespace ECS
 
 			EntityTableDiff diff = {};
 			EntityTable* newTable = TableTraverseAdd(info.table, compID, diff);
+			CommitTables(entity, &info, newTable, diff, true);
+		}
+
+		void RemoveComponent(EntityID entity, EntityID compID)override
+		{
+			assert(IsEntityAlive(entity));
+
+			InternalEntityInfo info = {};
+			GetInternalEntityInfo(info, entity);
+
+			EntityTableDiff diff = {};
+			EntityTable* newTable = TableTraverseRemove(info.table, compID, diff);
 			CommitTables(entity, &info, newTable, diff, true);
 		}
 
@@ -1568,6 +1579,13 @@ namespace ECS
 			return true;
 		}
 
+		void RemoveFromEntityType(EntityType& entityType, EntityID compID)
+		{
+			auto it = std::find(entityType.begin(), entityType.end(), compID);
+			if (it != entityType.end())
+				entityType.erase(it);
+		}
+
 		ComponentRecord* GetComponentRecord(EntityID id)
 		{
 			auto it = compRecordMap.find(StripGeneration(id));
@@ -2085,7 +2103,7 @@ namespace ECS
 			}
 
 			// Connect parent with new table 
-			AddTableGraphEdge(edge, compID, parent, newTable);
+			InitAddTableGraphEdge(edge, compID, parent, newTable);
 
 			return newTable;
 		}
@@ -2111,6 +2129,30 @@ namespace ECS
 			}
 
 			PopulateTableDiff(edge, compID, INVALID_ENTITY, diff);
+			return ret;
+		}
+
+		EntityTable* TableTraverseRemove(EntityTable* table, EntityID compID, EntityTableDiff& diff)
+		{
+			EntityTable* node = table != nullptr ? table : &root;
+			TableGraphEdge* edge = EnsureTableGraphEdge(node->graphNode.remove, compID);
+			EntityTable* ret = edge->to;
+			if (ret == nullptr)
+			{
+				ret = FindOrCreateTableWithoutID(node, compID, edge);
+				assert(ret != nullptr);
+			}
+
+			PopulateTableDiff(edge, compID, INVALID_ENTITY, diff);
+			return ret;
+		}
+
+		EntityTable* FindOrCreateTableWithoutID(EntityTable* parent, EntityID compID, TableGraphEdge* edge)
+		{
+			EntityType entityType = parent->type;
+			RemoveFromEntityType(entityType, compID);
+			EntityTable* ret = FindOrCreateTableWithIDs(entityType);
+			InitRemoveTableGraphEdge(edge, compID, parent, ret);
 			return ret;
 		}
 
@@ -2390,7 +2432,7 @@ namespace ECS
 			ECS_ASSERT(diff->removed.size() == removedCount);
 		}
 
-		void AddTableGraphEdge(TableGraphEdge* edge, EntityID compID, EntityTable* from, EntityTable* to)
+		void InitAddTableGraphEdge(TableGraphEdge* edge, EntityID compID, EntityTable* from, EntityTable* to)
 		{
 			edge->from = from;
 			edge->to = to;
@@ -2409,6 +2451,31 @@ namespace ECS
 
 				if (next != nullptr)
 					next->prev = edge;
+
+				// Compute table diff (Call PopulateTableDiff to get all diffs)
+				ComputeTableDiff(from, to, edge, compID);
+			}
+		}
+
+		void InitRemoveTableGraphEdge(TableGraphEdge* edge, EntityID compID, EntityTable* from, EntityTable* to)
+		{
+			edge->from = from;
+			edge->to = to;
+			edge->compID = compID;
+
+			EnsureHiTableGraphEdge(from->graphNode.remove, compID);
+
+			if (from != to)
+			{
+				// Remove edges are appended to incomingEdges->prev
+				Util::ListNode<TableGraphEdge>* toNode = &to->graphNode.incomingEdges;
+				Util::ListNode<TableGraphEdge>* prev = toNode->next;
+				toNode->prev = edge;
+				edge->next = toNode;
+				edge->prev = prev;
+
+				if (prev != nullptr)
+					prev->next = edge;
 
 				// Compute table diff (Call PopulateTableDiff to get all diffs)
 				ComputeTableDiff(from, to, edge, compID);
@@ -2645,6 +2712,7 @@ namespace ECS
 				DisconnectEdge(kvp.second, kvp.first);
 
 			// Remove incoming edges
+			// 1. Add edges are appended to incomingEdges->Next
 			Util::ListNode<TableGraphEdge>* cur, *next = graphNode.incomingEdges.next;
 			while ((cur = next))
 			{
@@ -2653,11 +2721,10 @@ namespace ECS
 				TableGraphEdge* edge = (TableGraphEdge*)cur;
 				DisconnectEdge(edge, edge->compID);
 				if (edge->from != nullptr)
-				{
 					edge->from->graphNode.add.hiEdges.erase(edge->compID);
-					edge->from->graphNode.remove.hiEdges.erase(edge->compID);
-				}
 			}
+
+			// 2. Remove edges are appended to incomingEdges->prev
 			Util::ListNode<TableGraphEdge>* prev = graphNode.incomingEdges.prev;
 			while ((cur = prev))
 			{
@@ -2666,10 +2733,7 @@ namespace ECS
 				TableGraphEdge* edge = (TableGraphEdge*)cur;
 				DisconnectEdge(edge, edge->compID);
 				if (edge->from != nullptr)
-				{
-					edge->from->graphNode.add.hiEdges.erase(edge->compID);
 					edge->from->graphNode.remove.hiEdges.erase(edge->compID);
-				}
 			}
 
 			graphNode.add.hiEdges.clear();
