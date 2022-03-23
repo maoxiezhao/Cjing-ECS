@@ -9,6 +9,7 @@ Features:
 * Query
 * Tag
 * Prefab
+* Hierarchy
   
  Example:  
 ```cpp

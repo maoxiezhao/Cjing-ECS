@@ -48,14 +48,17 @@ namespace ECS
 	const U32 FirstUserComponentID = 32;               // [32 - 256] user components	
 	const U32 FirstUserEntityID = HiComponentID + 128; // [256 - 384] builtin tags
 
+	EntityID BuiltinComponentID = HiComponentID;
+#define BUILTIN_COMPONENT_ID (BuiltinComponentID++)
+
 	// Tags
-	const EntityID EcsTagPrefab = HiComponentID + 0;
-
+	const EntityID EcsTagPrefab = BUILTIN_COMPONENT_ID;
 	// Relations
-	const EntityID EcsRelationIsA = HiComponentID + 1;
-
+	const EntityID EcsRelationIsA = BUILTIN_COMPONENT_ID;
+	const EntityID EcsRelationChildOf = BUILTIN_COMPONENT_ID;
 	// properties
-	const EntityID EcsPropertyTag = HiComponentID + 2;
+	const EntityID EcsPropertyTag = BUILTIN_COMPONENT_ID;
+	const EntityID EcsPropertyNone = BUILTIN_COMPONENT_ID;
 
 	#define ECS_ENTITY_MASK               (0xFFFFffffull)	// 32
 	#define ECS_ROLE_MASK                 (0xFFull << 56)
@@ -184,20 +187,22 @@ namespace ECS
 	{
 		TableFlagIsPrefab = 1 << 0,
 		TableFlagHasIsA = 1 << 1,
-		TableFlagHasCtors = 1 << 2,
-		TableFlagHasDtors = 1 << 3,
-		TableFlagHasCopy = 1 << 4,
-		TableFlagHasMove = 1 << 5,
+		TableFlagIsChild = 1 << 2,
+		TableFlagHasCtors = 1 << 3,
+		TableFlagHasDtors = 1 << 4,
+		TableFlagHasCopy = 1 << 5,
+		TableFlagHasMove = 1 << 6,
 	};
 
-	struct ComponentColumnData
-	{
-		Util::StorageVector data;    // Column element data
+	//struct ComponentColumnData
+	//{
+	//	Util::StorageVector data;    // Column element data
 
-		// Use ComponentTypeInfo to get size and alignment
-		//I64 size = 0;                // Column element size
-		//I64 alignment = 0;           // Column element alignment
-	};
+	//	// Use ComponentTypeInfo to get size and alignment
+	//	//I64 size = 0;                // Column element size
+	//	//I64 alignment = 0;           // Column element alignment
+	//};
+	using ComponentColumnData = Util::StorageVector;
 
 	struct TableComponentRecord
 	{
@@ -600,6 +605,17 @@ namespace ECS
 		void Instantiate(EntityID entity, EntityID prefab) override
 		{
 			AddComponent(entity, ECS_MAKE_PAIR(EcsRelationIsA, prefab));
+		}
+
+		void ChildOf(EntityID entity, EntityID parent)override
+		{
+			AddComponent(entity, ECS_MAKE_PAIR(EcsRelationChildOf, parent));
+		}
+
+		EntityID GetRelation(EntityID entity, EntityID relation, U32 index = 0)override
+		{
+			
+			return INVALID_ENTITY;
 		}
 
 		void* GetComponent(EntityID entity, EntityID compID) override
@@ -1263,7 +1279,7 @@ namespace ECS
 			{
 				ComponentTypeInfo& typeInfo = table->compTypeInfos[impl.columns[i]];
 				ComponentColumnData& columnData = table->storageColumns[impl.columns[i]];
-				iter.compDatas[i] = columnData.data.Get(typeInfo.size, typeInfo.alignment, 0);
+				iter.compDatas[i] = columnData.Get(typeInfo.size, typeInfo.alignment, 0);
 			}
 		}
 
@@ -1633,10 +1649,13 @@ namespace ECS
 			if (compID == InfoComponent::componentID ||
 				compID == NameComponent::componentID)
 				return compID;
-			
+		
 			if (ECS_HAS_ROLE(compID, EcsRolePair))
 			{
 				EntityID relation = ECS_GET_PAIR_FIRST(compID);
+				if (relation == EcsRelationChildOf)
+					return 0;
+				
 				relation = GetAliveEntity(relation);
 
 				// Tag dose not have type info, return zero
@@ -1745,8 +1764,8 @@ namespace ECS
 				table = FindOrCreateTableWithIDs(compIDs);
 
 				table->entities.reserve(FirstUserComponentID);
-				table->storageColumns[0].data.Reserve<InfoComponent>(FirstUserComponentID);
-				table->storageColumns[1].data.Reserve<NameComponent>(FirstUserComponentID);
+				table->storageColumns[0].Reserve<InfoComponent>(FirstUserComponentID);
+				table->storageColumns[1].Reserve<NameComponent>(FirstUserComponentID);
 			}
 
 			// Initialize builtin components
@@ -1758,12 +1777,12 @@ namespace ECS
 				entityInfo->row = index;
 
 				// Component info
-				InfoComponent* componentInfo = table->storageColumns[0].data.Get<InfoComponent>(index);
+				InfoComponent* componentInfo = table->storageColumns[0].Get<InfoComponent>(index);
 				componentInfo->size = size;
 				componentInfo->algnment = alignment;
 
 				// Name component
-				NameComponent* nameComponent = table->storageColumns[1].data.Get<NameComponent>(index);
+				NameComponent* nameComponent = table->storageColumns[1].Get<NameComponent>(index);
 				nameComponent->name = _strdup(compName);
 				nameComponent->hash = Util::HashFunc(compName, strlen(compName));
 
@@ -1798,6 +1817,7 @@ namespace ECS
 
 			// Relation
 			InitTag(EcsRelationIsA, "EcsRelationIsA");
+			InitTag(EcsRelationChildOf, "EcsRelationChildOf");
 
 			// Property
 			InitTag(EcsPropertyTag, "EcsPropertyTag");
@@ -1879,7 +1899,7 @@ namespace ECS
 			ComponentColumnData& columnData = table.storageColumns[column];
 			ComponentTypeInfo& typeInfo = table.compTypeInfos[column];
 			ECS_ASSERT(typeInfo.size != 0);
-			return columnData.data.Get(typeInfo.size, typeInfo.alignment, row);
+			return columnData.Get(typeInfo.size, typeInfo.alignment, row);
 		}
 
 		void* GetOrCreateMutableByID(EntityID entity, EntityID compID, bool* added)
@@ -1969,18 +1989,22 @@ namespace ECS
 
 		void CtorComponent(ComponentTypeInfo* typeInfo, ComponentColumnData* columnData, EntityID* entities, EntityID compID, I32 row, I32 count)
 		{
+			ECS_ASSERT(columnData != nullptr);
+
 			if (typeInfo != nullptr && typeInfo->reflectInfo.ctor != nullptr)
 			{
-				void* mem = columnData->data.Get(typeInfo->size, typeInfo->alignment, row);
+				void* mem = columnData->Get(typeInfo->size, typeInfo->alignment, row);
 				typeInfo->reflectInfo.ctor(this, entities, typeInfo->size, count, mem);
 			}
 		}
 
 		void DtorComponent(ComponentTypeInfo* typeInfo, ComponentColumnData* columnData, EntityID* entities, EntityID compID, I32 row, I32 count)
 		{
+			ECS_ASSERT(columnData != nullptr);
+
 			if (typeInfo == nullptr || typeInfo->reflectInfo.dtor != nullptr)
 			{
-				void* mem = columnData->data.Get(typeInfo->size, typeInfo->alignment, row);
+				void* mem = columnData->Get(typeInfo->size, typeInfo->alignment, row);
 				typeInfo->reflectInfo.dtor(this, entities, typeInfo->size, count, mem);
 			}
 		}
@@ -2258,8 +2282,8 @@ namespace ECS
 					ComponentColumnData* dstColumnData = &dstTable->storageColumns[dstColumnIndex];
 					ComponentTypeInfo& typeInfo = srcTable->compTypeInfos[srcColumnIndex];
 
-					void* srcMem = srcColumnData->data.Get(typeInfo.size, typeInfo.alignment, srcRow);
-					void* dstMem = dstColumnData->data.Get(typeInfo.size, typeInfo.alignment, dstRow);
+					void* srcMem = srcColumnData->Get(typeInfo.size, typeInfo.alignment, srcRow);
+					void* dstMem = dstColumnData->Get(typeInfo.size, typeInfo.alignment, dstRow);
 					ECS_ASSERT(srcMem != nullptr);
 					ECS_ASSERT(dstMem != nullptr);
 
@@ -2927,8 +2951,8 @@ namespace ECS
 		for (int i = 0; i < storageColumns.size(); i++)
 		{
 			ComponentColumnData& columnData = storageColumns[i];
-			ECS_ASSERT(columnData.data.GetCount() == count);
-			columnData.data.Clear();
+			ECS_ASSERT(columnData.GetCount() == count);
+			columnData.Clear();
 		}
 		storageColumns.clear();
 
@@ -2987,8 +3011,8 @@ namespace ECS
 				{
 					ComponentTypeInfo& typeInfo = compTypeInfos[i];
 					auto& columnData = storageColumns[i];
-					void* srcMem = columnData.data.Get(typeInfo.size, typeInfo.alignment, count);
-					void* dstMem = columnData.data.Get(typeInfo.size, typeInfo.alignment, index);
+					void* srcMem = columnData.Get(typeInfo.size, typeInfo.alignment, count);
+					void* dstMem = columnData.Get(typeInfo.size, typeInfo.alignment, index);
 
 					if (typeInfo.reflectInfo.move != nullptr && typeInfo.reflectInfo.dtor != nullptr)
 					{
@@ -3000,7 +3024,7 @@ namespace ECS
 						memcpy(dstMem, srcMem, typeInfo.size);
 					}
 
-					columnData.data.RemoveLast();
+					columnData.RemoveLast();
 				}
 			}
 			else
@@ -3015,7 +3039,7 @@ namespace ECS
 		for (int i = 0; i < storageCount; i++)
 		{
 			auto& columnData = storageColumns[i];
-			columnData.data.RemoveLast();
+			columnData.RemoveLast();
 		}
 	}
 
@@ -3025,21 +3049,21 @@ namespace ECS
 		{
 			auto& columnData = storageColumns[i];
 			auto& typeInfo = compTypeInfos[i];
-			columnData.data.Remove(typeInfo.size, typeInfo.alignment, index);
+			columnData.Remove(typeInfo.size, typeInfo.alignment, index);
 		}
 	}
 
 	void EntityTable::GrowColumn(Vector<EntityID>& entities, ComponentColumnData& columnData, ComponentTypeInfo* compTypeInfo, size_t addCount, size_t newCapacity, bool construct)
 	{
-		U32 oldCount = (U32)columnData.data.GetCount();
-		U32 oldCapacity = (U32)columnData.data.GetCapacity();
+		U32 oldCount = (U32)columnData.GetCount();
+		U32 oldCapacity = (U32)columnData.GetCapacity();
 
 		// Realloc column data
 		if (oldCapacity != newCapacity)
-			columnData.data.Reserve(compTypeInfo->size, compTypeInfo->alignment, newCapacity);
+			columnData.Reserve(compTypeInfo->size, compTypeInfo->alignment, newCapacity);
 
 		// Push new column datas and do placement new if we have ctor
-		void* mem = columnData.data.PushBackN(compTypeInfo->size, compTypeInfo->alignment, addCount);
+		void* mem = columnData.PushBackN(compTypeInfo->size, compTypeInfo->alignment, addCount);
 		if (construct && compTypeInfo && compTypeInfo->reflectInfo.ctor != nullptr)
 			compTypeInfo->reflectInfo.ctor(world, &entities[oldCount], compTypeInfo->size, addCount, mem);
 	}
@@ -3078,6 +3102,7 @@ namespace ECS
 		if (type.empty())
 			return;
 
+		bool hasChildOf = false;
 		// Find all used compIDs
 		std::unordered_map<EntityID, TableTypeItem> relations;
 		std::unordered_map<EntityID, TableTypeItem> objects;
@@ -3107,18 +3132,46 @@ namespace ECS
 					}
 					objects[obj].count++;
 				}
+
+				if (relation == EcsRelationChildOf)
+					hasChildOf = true;
 			}
 		}
 
-		tableRecords.resize(type.size() + relations.size() + objects.size());
+		I32 totalCount = type.size() + relations.size() + objects.size();
+		if (!hasChildOf)
+			totalCount++;
+
+		tableRecords.resize(totalCount);
 
 		// Register component record for base table type
 		U32 index = 0;
 		for (U32 i = 0; i < type.size(); i++)
 		{
-			world->RegisterComponentRecord(this, type[i], i, 1, tableRecords[i]);
+			world->RegisterComponentRecord(this, type[index], index, 1, tableRecords[index]);
 			index++;
 		}
+		
+		// Relations
+		for (auto kvp : relations)
+		{
+			EntityID type = ECS_MAKE_PAIR(kvp.first, 0);
+			world->RegisterComponentRecord(this, type, kvp.second.pos, kvp.second.count, tableRecords[index]);
+			index++;
+		}
+
+		// Objects
+		for (auto kvp : objects)
+		{
+			EntityID type = ECS_MAKE_PAIR(0, kvp.first);
+			world->RegisterComponentRecord(this, type, kvp.second.pos, kvp.second.count, tableRecords[index]);
+			index++;
+		}
+
+		// Add default child record if withou childof 
+		if (!hasChildOf && type.size() > 0)
+			world->RegisterComponentRecord(
+				this, ECS_MAKE_PAIR(EcsRelationChildOf, 0), index, index, tableRecords[index]);
 	}
 
 	void EntityTable::UnregisterTableRecords()
@@ -3158,8 +3211,11 @@ namespace ECS
 
 			if (ECS_HAS_ROLE(compID, EcsRolePair))
 			{
-				if (ECS_GET_PAIR_FIRST(compID) == EcsRelationIsA)
+				U32 relation = ECS_GET_PAIR_FIRST(compID);
+				if (relation == EcsRelationIsA)
 					flags |= TableFlagHasIsA;
+				else if (relation == EcsRelationChildOf)
+					flags |= TableFlagIsChild;
 			}
 		}
 	}
