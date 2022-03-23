@@ -174,7 +174,8 @@ public:                                                   \
 		virtual void EnsureEntity(EntityID entity) = 0;
 		virtual void Instantiate(EntityID entity, EntityID prefab) = 0;
 		virtual void ChildOf(EntityID entity, EntityID parent) = 0;
-		virtual EntityID GetRelation(EntityID entity, EntityID relation, U32 index = 0) = 0;
+		virtual EntityID GetParent(EntityID entity) = 0;
+		virtual EntityID GetRelationObject(EntityID entity, EntityID relation, U32 index = 0) = 0;
 
 		virtual void* GetComponent(EntityID entity, EntityID compID) = 0;
 		virtual bool HasComponent(EntityID entity, EntityID compID) = 0;
@@ -282,7 +283,7 @@ public:                                                   \
 
 		const EntityBuilder& ChildOf(EntityID parent)const
 		{
-
+			world->ChildOf(entity, parent);
 			return *this;
 		}
 

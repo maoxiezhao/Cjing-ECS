@@ -161,3 +161,17 @@ TEST_CASE("Query", "ECS")
 
     CHECK(aTimes == bTimes);
 }
+
+TEST_CASE("ChildOf", "ECS")
+{
+    std::unique_ptr<ECS::World> world = ECS::World::Create();
+    ECS::EntityID parent = world->CreateEntity("Parent")
+        .With<PositionComponent>()
+        .entity;
+    ECS::EntityID child = world->CreateEntity("Child")
+        .ChildOf(parent)
+        .entity;
+
+    ECS::EntityID target = world->GetParent(child);
+    CHECK(target == parent);
+}

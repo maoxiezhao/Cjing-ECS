@@ -51,14 +51,14 @@ namespace ECS
 	EntityID BuiltinComponentID = HiComponentID;
 #define BUILTIN_COMPONENT_ID (BuiltinComponentID++)
 
+	// properties
+	const EntityID EcsPropertyTag = BUILTIN_COMPONENT_ID;
+	const EntityID EcsPropertyNone = BUILTIN_COMPONENT_ID;
 	// Tags
 	const EntityID EcsTagPrefab = BUILTIN_COMPONENT_ID;
 	// Relations
 	const EntityID EcsRelationIsA = BUILTIN_COMPONENT_ID;
 	const EntityID EcsRelationChildOf = BUILTIN_COMPONENT_ID;
-	// properties
-	const EntityID EcsPropertyTag = BUILTIN_COMPONENT_ID;
-	const EntityID EcsPropertyNone = BUILTIN_COMPONENT_ID;
 
 	#define ECS_ENTITY_MASK               (0xFFFFffffull)	// 32
 	#define ECS_ROLE_MASK                 (0xFFull << 56)
@@ -82,6 +82,10 @@ namespace ECS
 
 	inline EntityID StripGeneration(EntityID id)
 	{
+		// id is a pair, don't need to erase the generation bits
+		if (id & ECS_ROLE_MASK)
+			return id;
+
 		return id & (~ECS_GENERATION_MASK);
 	}
 
@@ -612,10 +616,25 @@ namespace ECS
 			AddComponent(entity, ECS_MAKE_PAIR(EcsRelationChildOf, parent));
 		}
 
-		EntityID GetRelation(EntityID entity, EntityID relation, U32 index = 0)override
+		EntityID GetParent(EntityID entity)override
 		{
-			
-			return INVALID_ENTITY;
+			return GetRelationObject(entity, EcsRelationChildOf, 0);
+		}
+
+		EntityID GetRelationObject(EntityID entity, EntityID relation, U32 index = 0)override
+		{
+			EntityTable* table = GetTable(entity);
+			if (table == nullptr)
+				return INVALID_ENTITY;
+
+			TableComponentRecord* record = GetTableRecord(table, ECS_MAKE_PAIR(relation, EcsPropertyNone));
+			if (record == nullptr)
+				return INVALID_ENTITY;
+	
+			if (index >= record->count)
+				return INVALID_ENTITY;
+
+			return ECS_GET_PAIR_SECOND(table->type[record->column + index]);
 		}
 
 		void* GetComponent(EntityID entity, EntityID compID) override
@@ -756,7 +775,7 @@ namespace ECS
 
 		void RemoveComponent(EntityID entity, EntityID compID)override
 		{
-			assert(IsEntityAlive(entity));
+			ECS_ASSERT(IsEntityAlive(entity));
 
 			InternalEntityInfo info = {};
 			GetInternalEntityInfo(info, entity);
@@ -1514,7 +1533,20 @@ namespace ECS
 
 		ComponentRecord* CreateComponentRecord(EntityID compID)
 		{
-			return ECS_NEW_OBJECT<ComponentRecord>();
+			ComponentRecord* ret = ECS_NEW_OBJECT<ComponentRecord>();
+			if (ECS_HAS_ROLE(compID, EcsRolePair))
+			{
+				EntityID rel = ECS_GET_PAIR_FIRST(compID);
+				ECS_ASSERT(rel != 0);
+
+				EntityID obj = ECS_GET_PAIR_SECOND(compID);
+				if (obj != INVALID_ENTITY)
+				{
+					obj = GetAliveEntity(obj);
+					assert(obj != INVALID_ENTITY);
+				}
+			}
+			return ret;
 		}
 
 		bool FreeComponentRecord(ComponentRecord* record)
@@ -1597,6 +1629,12 @@ namespace ECS
 
 		void RemoveFromEntityType(EntityType& entityType, EntityID compID)
 		{
+			if (CheckIDHasPropertyNone(compID))
+			{
+				ECS_ASSERT(0);
+				return;
+			}
+
 			auto it = std::find(entityType.begin(), entityType.end(), compID);
 			if (it != entityType.end())
 				entityType.erase(it);
@@ -1643,6 +1681,13 @@ namespace ECS
 			return entityPool.GetAliveIndex(entity);
 		}
 
+		// Check id is PropertyNone
+		bool CheckIDHasPropertyNone(EntityID id)
+		{
+			return (id == EcsPropertyNone) || (ECS_HAS_ROLE(id, EcsRolePair)
+				&& (ECS_GET_PAIR_FIRST(id) || ECS_GET_PAIR_SECOND(id)));
+		}
+
 		// Get a single real type id
 		EntityID GetRealTypeID(EntityID compID)
 		{
@@ -1674,6 +1719,9 @@ namespace ECS
 					if (info && info->size != 0)
 						return object;
 				}
+
+				// No matching relation
+				return 0;
 			}
 			else if (compID & ECS_ROLE_MASK)
 			{
@@ -1804,6 +1852,10 @@ namespace ECS
 			InfoComponent tagInfo = {};
 			tagInfo.size = 0;
 
+			// TEMP:
+			// Ensure EcsPropertyNone
+			entityPool.Ensure(EcsPropertyNone);
+
 			auto InitTag = [&](EntityID tagID, const char* name)
 			{
 				EntityInfo* entityInfo = entityPool.Ensure(tagID);
@@ -1812,18 +1864,17 @@ namespace ECS
 				SetComponent(tagID, InfoComponent::GetComponentID(), sizeof(InfoComponent), &tagInfo, false);
 				SetEntityName(tagID, name);
 			};
+			// Property
+			InitTag(EcsPropertyTag, "EcsPropertyTag");
 			// Tags
 			InitTag(EcsTagPrefab, "EcsTagPrefab");
-
 			// Relation
 			InitTag(EcsRelationIsA, "EcsRelationIsA");
 			InitTag(EcsRelationChildOf, "EcsRelationChildOf");
 
-			// Property
-			InitTag(EcsPropertyTag, "EcsPropertyTag");
-
 			// RelationIsA has peropty of tag
 			AddComponent(EcsRelationIsA, EcsPropertyTag);
+			AddComponent(EcsRelationChildOf, EcsPropertyTag);
 		}
 
 		void InitSystemComponent()
@@ -2164,7 +2215,7 @@ namespace ECS
 			if (ret == nullptr)
 			{
 				ret = FindOrCreateTableWithoutID(node, compID, edge);
-				assert(ret != nullptr);
+				ECS_ASSERT(ret != nullptr);
 			}
 
 			PopulateTableDiff(edge, compID, INVALID_ENTITY, diff);
@@ -2416,9 +2467,11 @@ namespace ECS
 			removedCount += srcNumColumns - srcColumnIndex;
 
 			trivialEdge &= (addedCount + removedCount) <= 1 &&
-				(!ECS_HAS_RELATION(compID, EcsRelationIsA) 
-					&& !(t1->flags & TableFlagHasIsA) 
-					&& !(t2->flags & TableFlagHasIsA));
+				(!ECS_HAS_RELATION(compID, EcsRelationIsA)
+					&& !(t1->flags & TableFlagHasIsA)
+					&& !(t2->flags & TableFlagHasIsA)) &&
+					CheckIDHasPropertyNone(compID);
+
 			if (trivialEdge)
 			{
 				if (t1->storageTable != t2->storageTable)
@@ -3103,6 +3156,7 @@ namespace ECS
 			return;
 
 		bool hasChildOf = false;
+
 		// Find all used compIDs
 		std::unordered_map<EntityID, TableTypeItem> relations;
 		std::unordered_map<EntityID, TableTypeItem> objects;
@@ -3155,7 +3209,7 @@ namespace ECS
 		// Relations
 		for (auto kvp : relations)
 		{
-			EntityID type = ECS_MAKE_PAIR(kvp.first, 0);
+			EntityID type = ECS_MAKE_PAIR(kvp.first, EcsPropertyNone);
 			world->RegisterComponentRecord(this, type, kvp.second.pos, kvp.second.count, tableRecords[index]);
 			index++;
 		}
@@ -3163,7 +3217,7 @@ namespace ECS
 		// Objects
 		for (auto kvp : objects)
 		{
-			EntityID type = ECS_MAKE_PAIR(0, kvp.first);
+			EntityID type = ECS_MAKE_PAIR(EcsPropertyNone, kvp.first);
 			world->RegisterComponentRecord(this, type, kvp.second.pos, kvp.second.count, tableRecords[index]);
 			index++;
 		}
