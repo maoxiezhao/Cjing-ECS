@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <unordered_map>
 #include <array>
+#include <type_traits>
 
 using U8  = uint8_t;
 using U16 = uint16_t;
@@ -16,11 +17,22 @@ using I16 = int16_t;
 using I32 = int32_t;
 using I64 = int64_t;
 
+// Container
 template<typename Value>
 using Hashmap = std::unordered_map<U64, Value>;
 
 template<typename Value>
 using Vector = std::vector<Value>;
+
+template<typename T, size_t N>
+using Array = std::array<T, N>;
+
+// Typetraits
+template <bool _Test, class _Ty = void>
+using enable_if_t = std::enable_if_t<_Test, _Ty>;
+
+template<typename T>
+using decay_t = std::decay_t<T>;
 
 #define ECS_MALLOC(n) malloc(n)
 #define ECS_MALLOC_T(T) (T*)malloc(sizeof(T))

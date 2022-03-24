@@ -8,14 +8,12 @@
 
 struct PositionComponent
 {
-    COMPONENT(PositionComponent);
     float x = 0.0f;
     float y = 0.0f;
 };
 
 struct VelocityComponent
 {
-    COMPONENT(VelocityComponent);
     float x = 0.0f;
     float y = 0.0f;
 };
@@ -23,8 +21,9 @@ struct VelocityComponent
 static int clearTimes = 0;
 struct TestComponent
 {
-    COMPONENT(TestComponent);
     std::vector<int> vec;
+
+    TestComponent() {}
 
     TestComponent(TestComponent&& rhs) noexcept
     {
@@ -175,3 +174,26 @@ TEST_CASE("ChildOf", "ECS")
     ECS::EntityID target = world->GetParent(child);
     CHECK(target == parent);
 }
+
+//struct Position
+//{
+//    COMPONENT(Position);
+//    float x = 0.0f;
+//    float y = 0.0f;
+//};
+//
+//struct Local { TAG(Local); };
+//struct Global { TAG(Global); };
+//
+//int main()
+//{
+//	std::unique_ptr<ECS::World> world = ECS::World::Create();
+//    auto e1 = world->CreateEntity("e1")
+//        .With<Position, Local>({ 1.0f, 1.0f })
+//        .With<Position, Global>({ 2.0f, 3.0f });
+//
+//    Position* localPos = world->GetComponent<Position, Local>(e1.entity);
+//    Position* globalPos = world->GetComponent<Position, Global>(e1.entity);
+//
+//	return 0;
+//}

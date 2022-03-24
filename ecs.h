@@ -32,19 +32,6 @@ namespace ECS
 	//// Components
 	////////////////////////////////////////////////////////////////////////////////
 
-#define COMPONENT_INTERNAL(CLAZZ)                         \
-	static inline ECS::EntityID componentID = UINT32_MAX; \
-public:                                                   \
-	static ECS::EntityID GetComponentID() { return componentID; }                                
-
-#define COMPONENT(CLAZZ)								  \
-	COMPONENT_INTERNAL(CLAZZ)							  \
-	CLAZZ() = default;                                    \
-	CLAZZ(const CLAZZ &) = default;                       \
-	friend class World;
-
-#define TAG(CLAZZ) COMPONENT(CLAZZ)
-
 	using CompXtorFunc = void(*)(World* world, EntityID* entities, size_t size, size_t count, void* ptr);
 	using CompCopyFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr);
 	using CompMoveFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr);
@@ -64,10 +51,10 @@ public:                                                   \
 			CompMoveCtorFunc moveCtor;
 		};
 
-		template<typename T, typename std::enable_if_t<std::is_trivial<T>::value == false>* = nullptr>
+		template<typename T, typename enable_if_t<std::is_trivial<T>::value == false>* = nullptr>
 		static void Register(World& world, EntityID compID);
 
-		template<typename T, typename std::enable_if_t<std::is_trivial<T>::value == true>* = nullptr>
+		template<typename T, typename enable_if_t<std::is_trivial<T>::value == true>* = nullptr>
 		static void Register(World& world, EntityID compID);
 	}
 
@@ -99,10 +86,10 @@ public:                                                   \
 	struct ComponentType;
 
 	template<typename C>
-	struct ComponentType<C, std::enable_if_t<!Util::IsPair<C>::value, int>> : _::ComponentTypeRegister<C> {};
+	struct ComponentType<C, enable_if_t<!Util::IsPair<C>::value, int>> : _::ComponentTypeRegister<C> {};
 
 	template<typename C>
-	struct ComponentType<C, std::enable_if_t<Util::IsPair<C>::value, int>>
+	struct ComponentType<C, enable_if_t<Util::IsPair<C>::value, int>>
 	{
 		static EntityID ID(World& world)
 		{
@@ -220,9 +207,6 @@ public:                                                   \
 
 		///////////////////////////////////////////////////////////////////////////
 		// Component
-		virtual void* GetComponent(EntityID entity, EntityID compID) = 0;
-		virtual bool HasComponent(EntityID entity, EntityID compID) = 0;
-
 		template<typename C>
 		bool HasComponent(EntityID entity)
 		{
@@ -233,7 +217,7 @@ public:                                                   \
 		template<typename C>
 		C* GetComponent(EntityID entity)
 		{
-			return static_cast<C*>(GetComponent(entity, C::GetComponentID()));
+			return static_cast<C*>(GetComponent(entity, ComponentType<C>::ID(*this)));
 		}
 
 		template <typename R, typename O, typename P = Util::Pair<R, O>, typename C = typename Util::RealType<P>::type>
@@ -274,20 +258,23 @@ public:                                                   \
 		}
 
 		template<typename C>
-		void RemoveComponent(EntityID entity)
-		{
-			EntityID compID = ComponentType<C>::ID(*this);
-		}
-
-		template<typename C>
 		void AddRelation(EntityID entity, EntityID relation)
 		{
 			EntityID compID = ComponentType<C>::ID(*this);
 			AddRelation(entity, relation, compID);
 		}
 
+		template<typename C>
+		void RemoveComponent(EntityID entity)
+		{
+			EntityID compID = ComponentType<C>::ID(*this);
+			RemoveComponent(entity, compID);
+		}
+
+		virtual void* GetComponent(EntityID entity, EntityID compID) = 0;
+		virtual bool HasComponent(EntityID entity, EntityID compID) = 0;
 		virtual void AddRelation(EntityID entity, EntityID relation, EntityID compID) = 0;
-		virtual bool HasComponentTypeAction(EntityID compID)const = 0;
+		virtual bool HasComponentTypeInfo(EntityID compID)const = 0;
 		virtual ComponentTypeInfo* GetComponentTypeInfo(EntityID compID) = 0;
 		virtual const ComponentTypeInfo* GetComponentTypeInfo(EntityID compID)const = 0;
 		virtual void SetComponentTypeInfo(EntityID compID, const Reflect::ReflectInfo& info) = 0;
@@ -416,9 +403,7 @@ public:                                                   \
 			desc.entity.useComponentID = true;
 			desc.size = size;
 			desc.alignment = alignment;
-			EntityID ret = world.InitNewComponent(desc);
-			C::componentID = ret;
-			return ret;
+			return world.InitNewComponent(desc);
 		}
 
 		template<typename C>
@@ -447,7 +432,7 @@ public:                                                   \
 		};
 
 		template<typename T>
-		struct EachColumn<T, std::enable_if_t<!std::is_pointer_v<T>, int>> : EachColumnBase
+		struct EachColumn<T, enable_if_t<!std::is_pointer_v<T>, int>> : EachColumnBase
 		{
 			EachColumn(void* ptr, I32 row) : EachColumnBase(ptr, row) {};
 
@@ -460,12 +445,12 @@ public:                                                   \
 		template<typename... Comps>
 		struct CompTuple
 		{
-			using Array = std::array<void*, sizeof...(Comps)>;
+			using Array = Array<void*, sizeof...(Comps)>;
 			Array compsArray;
 
 			void Populate(QueryIterator* iter)
 			{
-				return PopulateImpl(iter, 0, static_cast<std::decay_t<Comps>*>(nullptr)...);
+				return PopulateImpl(iter, 0, static_cast<decay_t<Comps>*>(nullptr)...);
 			}
 
 		private:
@@ -486,7 +471,7 @@ public:                                                   \
 			using CompArray = typename CompTuple<Comps ...>::Array;
 
 			explicit EachInvoker(Func&& func_) noexcept :
-				func(std::move(func_)) {}
+				func(ECS_MOV(func_)) {}
 
 			explicit EachInvoker(const Func& func_) noexcept :
 				func(func_) {}
@@ -509,7 +494,7 @@ public:                                                   \
 
 		private:
 
-			template<typename... Args, std::enable_if_t<sizeof...(Comps) == sizeof...(Args), int> = 0>
+			template<typename... Args, enable_if_t<sizeof...(Comps) == sizeof...(Args), int> = 0>
 			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray&, Args... comps)
 			{
 				for (I32 row = 0; row < iter->entityCount; row++)
@@ -519,7 +504,7 @@ public:                                                   \
 				}
 			}
 
-			template<typename... Args, std::enable_if_t<sizeof...(Comps) != sizeof...(Args), int> = 0>
+			template<typename... Args, enable_if_t<sizeof...(Comps) != sizeof...(Args), int> = 0>
 			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray& compArr, Args... comps)
 			{
 				InvokeImpl(iter, func, index + 1, compArr, comps..., compArr[index]);
@@ -580,7 +565,7 @@ public:                                                   \
 		template<typename Func>
 		void ForEach(Func&& func)
 		{
-			using Invoker = typename _::EachInvoker<typename std::decay_t<Func>, Comps...>;
+			using Invoker = typename _::EachInvoker<decay_t<Func>, Comps...>;
 			QueryIterator iter = world->GetQueryIterator(queryID);
 			while (world->QueryIteratorNext(iter))
 				Invoker(ECS_FWD(func)).Invoke(&iter);
@@ -588,7 +573,7 @@ public:                                                   \
 
 	private:
 		World* world;
-		std::array<U64, sizeof...(Comps)> compIDs;
+		Array<U64, sizeof...(Comps)> compIDs;
 		QueryID queryID = 0;
 		QueryCreateDesc desc = {};
 	};
@@ -623,7 +608,7 @@ public:                                                   \
 		template<typename Func>
 		EntityID ForEach(Func&& func)
 		{
-			using Invoker = typename _::EachInvoker<typename std::decay_t<Func>, Comps...>;
+			using Invoker = typename _::EachInvoker<decay_t<Func>, Comps...>;
 			return Build<Invoker>(ECS_FWD(func));
 		}
 
@@ -642,7 +627,7 @@ public:                                                   \
 	private:
 		World* world;
 		SystemCreateDesc desc = {};
-		std::array<U64, sizeof...(Comps)> compIDs;
+		Array<U64, sizeof...(Comps)> compIDs;
 	};
 
 	template<typename... Args>
@@ -674,19 +659,19 @@ public:                                                   \
 			assert(0);
 		}
 
-		template<typename T, std::enable_if_t<std::is_trivially_constructible_v<T>, int> = 0>
+		template<typename T, enable_if_t<std::is_trivially_constructible_v<T>, int> = 0>
 		CompXtorFunc Ctor()
 		{
 			return nullptr;
 		}
 
-		template<typename T, std::enable_if_t<!std::is_default_constructible_v<T>, int> = 0>
+		template<typename T, enable_if_t<!std::is_default_constructible_v<T>, int> = 0>
 		CompXtorFunc Ctor()
 		{
 			return IllegalCtor;
 		}
 
-		template<typename T, std::enable_if_t<std::is_default_constructible_v<T> &&
+		template<typename T, enable_if_t<std::is_default_constructible_v<T> &&
 			!std::is_trivially_constructible_v<T>, int> = 0>
 			CompXtorFunc Ctor()
 		{
@@ -704,13 +689,13 @@ public:                                                   \
 				objArr[i].~T();
 		}
 
-		template<typename T, std::enable_if_t<std::is_trivially_destructible_v<T>, int> = 0>
+		template<typename T, enable_if_t<std::is_trivially_destructible_v<T>, int> = 0>
 		CompXtorFunc Dtor()
 		{
 			return nullptr;
 		}
 
-		template<typename T, std::enable_if_t<!std::is_trivially_destructible_v<T>, int> = 0>
+		template<typename T, enable_if_t<!std::is_trivially_destructible_v<T>, int> = 0>
 		CompXtorFunc Dtor()
 		{
 			return DefaultDtor<T>;
@@ -733,19 +718,19 @@ public:                                                   \
 			assert(0);
 		}
 
-		template<typename T, std::enable_if_t<std::is_trivially_copyable_v<T>, int> = 0>
+		template<typename T, enable_if_t<std::is_trivially_copyable_v<T>, int> = 0>
 		CompCopyFunc Copy()
 		{
 			return nullptr;
 		}
 
-		template<typename T, std::enable_if_t<!std::is_copy_assignable_v<T>, int> = 0>
+		template<typename T, enable_if_t<!std::is_copy_assignable_v<T>, int> = 0>
 		CompCopyFunc Copy()
 		{
 			return IllegalCopy;
 		}
 
-		template<typename T, std::enable_if_t<std::is_copy_assignable_v<T> &&
+		template<typename T, enable_if_t<std::is_copy_assignable_v<T> &&
 			!std::is_trivially_copyable_v<T>, int> = 0>
 			CompCopyFunc Copy()
 		{
@@ -764,19 +749,19 @@ public:                                                   \
 				new (&dstArr[i]) T(srcArr[i]);
 		}
 
-		template<typename T, std::enable_if_t<std::is_trivially_copy_constructible_v<T>, int> = 0>
+		template<typename T, enable_if_t<std::is_trivially_copy_constructible_v<T>, int> = 0>
 		CompCopyCtorFunc CopyCtor()
 		{
 			return nullptr;
 		}
 
-		template<typename T, std::enable_if_t<!std::is_copy_constructible_v<T>, int> = 0>
+		template<typename T, enable_if_t<!std::is_copy_constructible_v<T>, int> = 0>
 		CompCopyCtorFunc CopyCtor()
 		{
 			return IllegalCopy;
 		}
 
-		template<typename T, std::enable_if_t<std::is_copy_constructible_v<T> &&
+		template<typename T, enable_if_t<std::is_copy_constructible_v<T> &&
 			!std::is_trivially_copy_constructible_v<T>, int> = 0>
 			CompCopyCtorFunc CopyCtor()
 		{
@@ -792,7 +777,7 @@ public:                                                   \
 			T* srcArr = static_cast<T*>(srcPtr);
 			T* dstArr = static_cast<T*>(dstPtr);
 			for (size_t i = 0; i < count; i++)
-				dstArr[i] = std::move(srcArr[i]);
+				dstArr[i] = ECS_MOV(srcArr[i]);
 		}
 
 		inline void IllegalMove(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr)
@@ -800,19 +785,19 @@ public:                                                   \
 			assert(0);
 		}
 
-		template<typename T, std::enable_if_t<std::is_trivially_move_assignable_v<T>, int> = 0>
+		template<typename T, enable_if_t<std::is_trivially_move_assignable_v<T>, int> = 0>
 		CompMoveFunc Move()
 		{
 			return nullptr;
 		}
 
-		template<typename T, std::enable_if_t<!std::is_move_assignable_v<T>, int> = 0>
+		template<typename T, enable_if_t<!std::is_move_assignable_v<T>, int> = 0>
 		CompMoveFunc Move()
 		{
 			return IllegalMove;
 		}
 
-		template<typename T, std::enable_if_t<std::is_move_assignable_v<T> &&
+		template<typename T, enable_if_t<std::is_move_assignable_v<T> &&
 			!std::is_trivially_move_assignable_v<T>, int> = 0>
 			CompMoveFunc Move()
 		{
@@ -828,32 +813,32 @@ public:                                                   \
 			T* srcArr = static_cast<T*>(srcPtr);
 			T* dstArr = static_cast<T*>(dstPtr);
 			for (size_t i = 0; i < count; i++)
-				new (&dstArr[i]) T(std::move(srcArr[i]));
+				new (&dstArr[i]) T(ECS_MOV(srcArr[i]));
 		}
 
-		template<typename T, std::enable_if_t<std::is_trivially_move_constructible_v<T>, int> = 0>
+		template<typename T, enable_if_t<std::is_trivially_move_constructible_v<T>, int> = 0>
 		CompMoveCtorFunc MoveCtor()
 		{
 			return nullptr;
 		}
 
-		template<typename T, std::enable_if_t<!std::is_move_constructible_v<T>, int> = 0>
+		template<typename T, enable_if_t<!std::is_move_constructible_v<T>, int> = 0>
 		CompMoveCtorFunc MoveCtor()
 		{
 			return IllegalMove;
 		}
 
-		template<typename T, std::enable_if_t<std::is_move_constructible_v<T> &&
+		template<typename T, enable_if_t<std::is_move_constructible_v<T> &&
 			!std::is_trivially_move_constructible_v<T>, int> = 0>
 			CompMoveCtorFunc MoveCtor()
 		{
 			return DefaultMoveCtor<T>;
 		}
 
-		template<typename T, typename std::enable_if_t<std::is_trivial<T>::value == false>*>
+		template<typename T, typename enable_if_t<std::is_trivial<T>::value == false>*>
 		void Register(World& world, EntityID compID)
 		{
-			if (!world.HasComponentTypeAction(compID))
+			if (!world.HasComponentTypeInfo(compID))
 			{
 				ReflectInfo info = {};
 				info.ctor = Ctor<T>();
@@ -866,7 +851,7 @@ public:                                                   \
 			}
 		}
 
-		template<typename T, typename std::enable_if_t<std::is_trivial<T>::value == true>*>
+		template<typename T, typename enable_if_t<std::is_trivial<T>::value == true>*>
 		void Register(World& world, EntityID compID) {}
 	}
 }

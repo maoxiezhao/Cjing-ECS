@@ -72,6 +72,7 @@ namespace ECS
 	//// Definition
 	////////////////////////////////////////////////////////////////////////////////
 
+	#define ECS_ENTITY_ID(e) (ECS_ID_##e)
 	#define ECS_ENTITY_MASK               (0xFFFFffffull)	// 32
 	#define ECS_ROLE_MASK                 (0xFFull << 56)
 	#define ECS_COMPONENT_MASK            (~ECS_ROLE_MASK)	// 56
@@ -82,7 +83,7 @@ namespace ECS
 	#define ECS_GET_PAIR_FIRST(e) (ECS_ENTITY_HI(e & ECS_COMPONENT_MASK))
 	#define ECS_GET_PAIR_SECOND(e) (ECS_ENTITY_LOW(e))
 	#define ECS_HAS_RELATION(e, rela) (ECS_HAS_ROLE(e, EcsRolePair) && ECS_GET_PAIR_FIRST(e) == rela)
-	
+
 	inline U64 EntityTypeHash(const EntityType& entityType)
 	{
 		return Util::HashFunc(entityType.data(), entityType.size() * sizeof(EntityID));
@@ -413,27 +414,28 @@ namespace ECS
 
 	struct InfoComponent
 	{
-		COMPONENT(InfoComponent)
 		size_t size = 0;
 		size_t algnment = 0;
 	};
 
 	struct NameComponent
 	{
-		COMPONENT(NameComponent)
 		const char* name = nullptr;
 		U64 hash = 0;
 	};
 
 	struct SystemComponent
 	{
-		COMPONENT(SystemComponent)
 		EntityID entity;
 		SystemAction action;
 		void* invoker;
 		InvokerDeleter invokerDeleter;
 		QueryImpl* query;
 	};
+
+	EntityID ECS_ENTITY_ID(InfoComponent) = 1;
+	EntityID ECS_ENTITY_ID(NameComponent) = 2;
+	EntityID ECS_ENTITY_ID(SystemComponent) = 3;
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// WorldImpl
@@ -597,7 +599,7 @@ namespace ECS
 			NameComponent nameComp = {};
 			nameComp.name = _strdup(name);
 			nameComp.hash = Util::HashFunc(name, strlen(name));
-			SetComponent(entity, NameComponent::GetComponentID(), sizeof(NameComponent), &nameComp, false);
+			SetComponent(entity, ECS_ENTITY_ID(NameComponent), sizeof(NameComponent), &nameComp, false);
 		}
 
 		void EnsureEntity(EntityID entity) override
@@ -685,7 +687,7 @@ namespace ECS
 			AddComponent(entity, ECS_MAKE_PAIR(relation, compID));
 		}
 
-		bool HasComponentTypeAction(EntityID compID)const override
+		bool HasComponentTypeInfo(EntityID compID)const override
 		{
 			return GetComponentTypeInfo(compID) != nullptr;
 		}
@@ -747,7 +749,7 @@ namespace ECS
 				return INVALID_ENTITY;
 
 			bool added = false;
-			InfoComponent* info = GetOrCreateMutableByID<InfoComponent>(entityID, &added);
+			InfoComponent* info = static_cast<InfoComponent*>(GetOrCreateMutableByID(entityID, ECS_ENTITY_ID(InfoComponent), &added));
 			if (info == nullptr)
 				return INVALID_ENTITY;
 
@@ -812,7 +814,7 @@ namespace ECS
 				return INVALID_ENTITY;
 
 			bool newAdded = false;
-			SystemComponent* sysComponent = GetOrCreateMutableByID<SystemComponent>(entity, &newAdded);
+			SystemComponent* sysComponent = static_cast<SystemComponent*>(GetOrCreateMutableByID(entity, ECS_ENTITY_ID(SystemComponent), &newAdded));
 			if (newAdded)
 			{
 				memset(sysComponent, 0, sizeof(SystemComponent));
@@ -833,7 +835,7 @@ namespace ECS
 		void RunSystem(EntityID entity) override
 		{
 			ECS_ASSERT(entity != INVALID_ENTITY);
-			SystemComponent* sysComponent =static_cast<SystemComponent*>(GetComponent(entity, SystemComponent::GetComponentID()));
+			SystemComponent* sysComponent =static_cast<SystemComponent*>(GetComponent(entity, ECS_ENTITY_ID(SystemComponent)));
 			if (sysComponent == nullptr)
 				return;
 
@@ -1529,7 +1531,7 @@ namespace ECS
 			// Add name component
 			const char* name = desc.name;
 			if (name && !nameAssigned)
-				table = TableAppend(table, NameComponent::GetComponentID(), diff);
+				table = TableAppend(table, ECS_ENTITY_ID(NameComponent), diff);
 
 			// Commit entity table
 			if (srcTable != table)
@@ -1706,8 +1708,8 @@ namespace ECS
 		// Get a single real type id
 		EntityID GetRealTypeID(EntityID compID)
 		{
-			if (compID == InfoComponent::componentID ||
-				compID == NameComponent::componentID)
+			if (compID == ECS_ENTITY_ID(InfoComponent) ||
+				compID == ECS_ENTITY_ID(NameComponent))
 				return compID;
 		
 			if (ECS_HAS_ROLE(compID, EcsRolePair))
@@ -1785,34 +1787,30 @@ namespace ECS
 		}
 
 		template<typename C>
-		void InitBuiltinComponentTypeInfo()
+		void InitBuiltinComponentTypeInfo(EntityID id)
 		{
-			ComponentTypeInfo* typeInfo = EnsureComponentTypInfo(C::GetComponentID());
+			ComponentTypeInfo* typeInfo = EnsureComponentTypInfo(id);
 			typeInfo->size = sizeof(C);
 			typeInfo->alignment = alignof(C);
 		}
 
 		void SetupComponentIDs()
 		{
-			InfoComponent::componentID = 1;
-			NameComponent::componentID = 2;
-			SystemComponent::componentID = 3;
-
-			InitBuiltinComponentTypeInfo<InfoComponent>();
-			InitBuiltinComponentTypeInfo<NameComponent>();
-			InitBuiltinComponentTypeInfo<SystemComponent>();
+			InitBuiltinComponentTypeInfo<InfoComponent>(ECS_ENTITY_ID(InfoComponent));
+			InitBuiltinComponentTypeInfo<NameComponent>(ECS_ENTITY_ID(NameComponent));
+			InitBuiltinComponentTypeInfo<SystemComponent>(ECS_ENTITY_ID(SystemComponent));
 
 			// Info component
 			Reflect::ReflectInfo info = {};
 			info.ctor = DefaultCtor;
-			SetComponentTypeInfo(InfoComponent::GetComponentID(), info);
+			SetComponentTypeInfo(ECS_ENTITY_ID(InfoComponent), info);
 
 			// Name component
 			info.ctor = Reflect::Ctor<NameComponent>();
 			info.dtor = Reflect::Dtor<NameComponent>();
 			info.copy = Reflect::Copy<NameComponent>();
 			info.move = Reflect::Move<NameComponent>();
-			SetComponentTypeInfo(NameComponent::GetComponentID(), info);
+			SetComponentTypeInfo(ECS_ENTITY_ID(NameComponent), info);
 		}
 
 		void InitBuiltinComponents()
@@ -1821,8 +1819,8 @@ namespace ECS
 			EntityTable* table = nullptr;
 			{
 				Vector<EntityID> compIDs = {
-					InfoComponent::GetComponentID(),
-					NameComponent::GetComponentID()
+					ECS_ENTITY_ID(InfoComponent),
+					ECS_ENTITY_ID(NameComponent)
 				};
 				table = FindOrCreateTableWithIDs(compIDs);
 
@@ -1852,8 +1850,8 @@ namespace ECS
 				entityNameMap[nameComponent->hash] = compID;
 			};
 
-			InitBuiltinComponent(InfoComponent::GetComponentID(), sizeof(InfoComponent), alignof(InfoComponent), Util::Typename<InfoComponent>());
-			InitBuiltinComponent(NameComponent::GetComponentID(), sizeof(NameComponent), alignof(NameComponent), Util::Typename<NameComponent>());
+			InitBuiltinComponent(ECS_ENTITY_ID(InfoComponent), sizeof(InfoComponent), alignof(InfoComponent), Util::Typename<InfoComponent>());
+			InitBuiltinComponent(ECS_ENTITY_ID(NameComponent), sizeof(NameComponent), alignof(NameComponent), Util::Typename<NameComponent>());
 
 			lastComponentID = FirstUserComponentID;
 			lastID = FirstUserEntityID;
@@ -1876,7 +1874,7 @@ namespace ECS
 				EntityInfo* entityInfo = entityPool.Ensure(tagID);
 				ECS_ASSERT(entityInfo != nullptr);
 
-				SetComponent(tagID, InfoComponent::GetComponentID(), sizeof(InfoComponent), &tagInfo, false);
+				SetComponent(tagID, ECS_ENTITY_ID(InfoComponent), sizeof(InfoComponent), &tagInfo, false);
 				SetEntityName(tagID, name);
 			};
 			// Property
@@ -1896,12 +1894,12 @@ namespace ECS
 		{
 			// System is a special builtin component, it build in a independent table.
 			ComponentCreateDesc desc = {};
-			desc.entity.entity = SystemComponent::componentID;
+			desc.entity.entity = ECS_ENTITY_ID(SystemComponent);
 			desc.entity.name = Util::Typename<SystemComponent>();
 			desc.entity.useComponentID = true;
 			desc.size = sizeof(SystemComponent);
 			desc.alignment = alignof(SystemComponent);
-			SystemComponent::componentID = InitNewComponent(desc);
+			ECS_ENTITY_ID(SystemComponent) = InitNewComponent(desc);
 
 			// Set system component action
 			Reflect::ReflectInfo info = {};
@@ -1919,13 +1917,7 @@ namespace ECS
 						worldImpl->FiniQuery(sys.query);
 				}
 			};
-			SetComponentTypeInfo(SystemComponent::GetComponentID(), info);
-		}
-
-		template<typename C>
-		C* GetOrCreateMutableByID(EntityID entity, bool* added)
-		{
-			return static_cast<C*>(GetOrCreateMutableByID(entity, C::GetComponentID(), added));
+			SetComponentTypeInfo(ECS_ENTITY_ID(SystemComponent), info);
 		}
 
 		EntityID CreateNewComponentID()
@@ -2006,7 +1998,7 @@ namespace ECS
 
 		InfoComponent* GetComponentInfo(EntityID compID)
 		{
-			return static_cast<InfoComponent*>(GetComponent(compID, InfoComponent::GetComponentID()));
+			return static_cast<InfoComponent*>(GetComponent(compID, ECS_ENTITY_ID(InfoComponent)));
 		}
 
 		void SetComponent(EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove)
