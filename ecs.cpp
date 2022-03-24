@@ -671,7 +671,7 @@ namespace ECS
 
 		bool HasComponentTypeAction(EntityID compID)const override
 		{
-			return GetComponentTypInfo(compID) != nullptr;
+			return GetComponentTypeInfo(compID) != nullptr;
 		}
 
 		ComponentTypeInfo* EnsureComponentTypInfo(EntityID compID)
@@ -679,12 +679,12 @@ namespace ECS
 			return compTypePool.Ensure(compID);
 		}
 
-		ComponentTypeInfo* GetComponentTypInfo(EntityID compID) override
+		ComponentTypeInfo* GetComponentTypeInfo(EntityID compID) override
 		{
 			return compTypePool.Get(compID);
 		}
 
-		const ComponentTypeInfo* GetComponentTypInfo(EntityID compID)const override
+		const ComponentTypeInfo* GetComponentTypeInfo(EntityID compID)const override
 		{
 			return compTypePool.Get(compID);
 		}
@@ -1755,7 +1755,7 @@ namespace ECS
 				EntityID type = GetRealTypeID(compID);
 				if (type != INVALID_ENTITY)
 				{
-					compRecord->typeInfo = GetComponentTypInfo(type);
+					compRecord->typeInfo = GetComponentTypeInfo(type);
 					ECS_ASSERT(compRecord->typeInfo != nullptr);
 				}
 				compRecord->typeInfoInited = true;
@@ -1843,8 +1843,8 @@ namespace ECS
 			lastComponentID = FirstUserComponentID;
 			lastID = FirstUserEntityID;
 
-			ComponentTypeRegister<InfoComponent>::RegisterComponent(*this);
-			ComponentTypeRegister<NameComponent>::RegisterComponent(*this);
+			//ComponentTypeRegister<InfoComponent>::RegisterComponent(*this);
+			//ComponentTypeRegister<NameComponent>::RegisterComponent(*this);
 		}
 
 		void InitBuiltinTags()
@@ -2001,7 +2001,7 @@ namespace ECS
 			ECS_ASSERT(dst != NULL);
 			if (ptr)
 			{
-				ComponentTypeInfo* compTypeInfo = GetComponentTypInfo(compID);
+				ComponentTypeInfo* compTypeInfo = GetComponentTypeInfo(compID);
 				if (compTypeInfo != nullptr)
 				{
 					if (isMove)

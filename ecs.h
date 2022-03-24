@@ -37,6 +37,8 @@ public:                                                   \
 	CLAZZ(const CLAZZ &) = default;                       \
 	friend class World;
 
+#define TAG(CLAZZ) COMPONENT(CLAZZ)
+
 	using CompXtorFunc = void(*)(World* world, EntityID* entities, size_t size, size_t count, void* ptr);
 	using CompCopyFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr);
 	using CompMoveFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr);
@@ -65,11 +67,20 @@ public:                                                   \
 	template<typename C>
 	struct ComponentTypeRegister
 	{
+		static size_t size;
+		static size_t alignment;
 		static EntityID componentID;
+
 		static EntityID ComponentID(World& world);
-		static EntityID RegisterComponent(World& world, const char* name = nullptr);
+
+	private:
+		static EntityID RegisterComponent(World& world, size_t size, size_t alignment, const char* name = nullptr);
 		static bool Registered(World& world);
 	};
+	template<typename C>
+	size_t ComponentTypeRegister<C>::size = 0;
+	template<typename C>
+	size_t ComponentTypeRegister<C>::alignment = 0;
 	template<typename C>
 	EntityID ComponentTypeRegister<C>::componentID = INVALID_ENTITY;
 
@@ -236,8 +247,8 @@ public:                                                   \
 
 		virtual void AddRelation(EntityID entity, EntityID relation, EntityID compID) = 0;
 		virtual bool HasComponentTypeAction(EntityID compID)const = 0;
-		virtual ComponentTypeInfo* GetComponentTypInfo(EntityID compID) = 0;
-		virtual const ComponentTypeInfo* GetComponentTypInfo(EntityID compID)const = 0;
+		virtual ComponentTypeInfo* GetComponentTypeInfo(EntityID compID) = 0;
+		virtual const ComponentTypeInfo* GetComponentTypeInfo(EntityID compID)const = 0;
 		virtual void SetComponentTypeInfo(EntityID compID, const Reflect::ReflectInfo& info) = 0;
 		virtual EntityID InitNewComponent(const ComponentCreateDesc& desc) = 0;
 		virtual void* GetOrCreateComponent(EntityID entity, EntityID compID) = 0;
@@ -281,6 +292,14 @@ public:                                                   \
 			return *this;
 		}
 
+		template <typename R, typename O>
+		const EntityBuilder& With() const
+		{
+			EntityID relation = ComponentTypeRegister<R>::ComponentID(*world);
+			world->AddRelation<O>(entity, relation);
+			return *this;
+		}
+
 		const EntityBuilder& ChildOf(EntityID parent)const
 		{
 			world->ChildOf(entity, parent);
@@ -309,16 +328,28 @@ public:                                                   \
 	{
 		if (!Registered(world))
 		{
+			size = sizeof(C);
+			alignment = alignof(C);
+
+			// In default case, the size of empty struct is 1
+			if (std::is_empty_v<C>)
+			{
+				size = 0;
+				alignment = 0;
+			}
+
 			// Register component
-			componentID = RegisterComponent(world);
+			componentID = RegisterComponent(world, size, alignment);
 			// Register reflect info
-			Reflect::Register<C>(world, componentID);
+
+			if (size > 0)
+				Reflect::Register<C>(world, componentID);
 		}
 		return componentID;
 	}
 
 	template<typename C>
-	inline EntityID ComponentTypeRegister<C>::RegisterComponent(World& world, const char* name)
+	inline EntityID ComponentTypeRegister<C>::RegisterComponent(World& world, size_t size, size_t alignment, const char* name)
 	{
 		const char* n = name;
 		if (n == nullptr)
@@ -328,8 +359,8 @@ public:                                                   \
 		desc.entity.entity = INVALID_ENTITY;
 		desc.entity.name = n;
 		desc.entity.useComponentID = true;
-		desc.size = sizeof(C);
-		desc.alignment = alignof(C);
+		desc.size = size;
+		desc.alignment = alignment;
 		EntityID ret = world.InitNewComponent(desc);
 		C::componentID = ret;
 		return ret;
