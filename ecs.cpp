@@ -2,6 +2,9 @@
 
 // TODO
 // 1. hierarchy
+// 1.1 ChildOf (Complete)
+// 1.2 (Child-Parent update)
+// 
 // 2. Query refactor
 // 3. Table merage
 // 4. Shared component (GetBaseComponent)
@@ -44,6 +47,11 @@ namespace ECS
 	const EntityID EcsRolePair = ((0x01ull) << 56);
 	const EntityID EcsRoleShared = ((0x02ull) << 56);
 
+	const size_t ENTITY_PAIR_FLAG = EcsRolePair;
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Builtin ids
+	////////////////////////////////////////////////////////////////////////////////
 	const EntityID HiComponentID = 256;
 	const U32 FirstUserComponentID = 32;               // [32 - 256] user components	
 	const U32 FirstUserEntityID = HiComponentID + 128; // [256 - 384] builtin tags
@@ -60,6 +68,10 @@ namespace ECS
 	const EntityID EcsRelationIsA = BUILTIN_COMPONENT_ID;
 	const EntityID EcsRelationChildOf = BUILTIN_COMPONENT_ID;
 
+	////////////////////////////////////////////////////////////////////////////////
+	//// Definition
+	////////////////////////////////////////////////////////////////////////////////
+
 	#define ECS_ENTITY_MASK               (0xFFFFffffull)	// 32
 	#define ECS_ROLE_MASK                 (0xFFull << 56)
 	#define ECS_COMPONENT_MASK            (~ECS_ROLE_MASK)	// 56
@@ -67,10 +79,6 @@ namespace ECS
 	#define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
 
 	#define ECS_HAS_ROLE(e, p) ((e & ECS_ROLE_MASK) == p)
-	#define ECS_ENTITY_HI(e) (static_cast<U32>((e) >> 32))
-	#define ECS_ENTITY_LOW(e) (static_cast<U32>(e))
-	#define ECS_ENTITY_COMBO(lo, hi) ((static_cast<U64>(hi) << 32) + static_cast<U32>(lo))
-	#define ECS_MAKE_PAIR(re, obj) (EcsRolePair | ECS_ENTITY_COMBO(obj, re))
 	#define ECS_GET_PAIR_FIRST(e) (ECS_ENTITY_HI(e & ECS_COMPONENT_MASK))
 	#define ECS_GET_PAIR_SECOND(e) (ECS_ENTITY_LOW(e))
 	#define ECS_HAS_RELATION(e, rela) (ECS_HAS_ROLE(e, EcsRolePair) && ECS_GET_PAIR_FIRST(e) == rela)
@@ -173,17 +181,6 @@ namespace ECS
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
-	//// Component
-	////////////////////////////////////////////////////////////////////////////////
-
-	struct ComponentRecord
-	{
-		EntityTableCache cache;			// TableComponentRecords
-		bool typeInfoInited = false;
-		ComponentTypeInfo* typeInfo = nullptr;
-	};
-
-	////////////////////////////////////////////////////////////////////////////////
 	//// EntityTable
 	////////////////////////////////////////////////////////////////////////////////
 
@@ -198,16 +195,6 @@ namespace ECS
 		TableFlagHasMove = 1 << 6,
 	};
 
-	//struct ComponentColumnData
-	//{
-	//	Util::StorageVector data;    // Column element data
-
-	//	// Use ComponentTypeInfo to get size and alignment
-	//	//I64 size = 0;                // Column element size
-	//	//I64 alignment = 0;           // Column element alignment
-	//};
-	using ComponentColumnData = Util::StorageVector;
-
 	struct TableComponentRecord
 	{
 		EntityTableCacheItem header;	// Table list which use this component
@@ -215,6 +202,8 @@ namespace ECS
 		I32 column = 0;					// The column of comp in target table
 		I32 count = 0;
 	};
+
+	using ComponentColumnData = Util::StorageVector;
 
 	// Archetype table for entity, archtype is a set of componentIDs
 	struct EntityTable
@@ -258,6 +247,17 @@ namespace ECS
 		void InitTableFlags();
 		void InitStorageTable();
 		void InitTypeInfos();
+	};
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Component
+	////////////////////////////////////////////////////////////////////////////////
+
+	struct ComponentRecord
+	{
+		EntityTableCache cache;			// TableComponentRecords
+		bool typeInfoInited = false;
+		ComponentTypeInfo* typeInfo = nullptr;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -398,21 +398,21 @@ namespace ECS
 	struct InfoComponent
 	{
 		COMPONENT(InfoComponent)
-			size_t size = 0;
+		size_t size = 0;
 		size_t algnment = 0;
 	};
 
 	struct NameComponent
 	{
 		COMPONENT(NameComponent)
-			const char* name = nullptr;
+		const char* name = nullptr;
 		U64 hash = 0;
 	};
 
 	struct SystemComponent
 	{
 		COMPONENT(SystemComponent)
-			EntityID entity;
+		EntityID entity;
 		SystemAction action;
 		void* invoker;
 		InvokerDeleter invokerDeleter;
@@ -631,7 +631,7 @@ namespace ECS
 			if (record == nullptr)
 				return INVALID_ENTITY;
 	
-			if (index >= record->count)
+			if (index >= (U32)record->count)
 				return INVALID_ENTITY;
 
 			return ECS_GET_PAIR_SECOND(table->type[record->column + index]);
@@ -2095,6 +2095,14 @@ namespace ECS
 			return info->table;
 		}
 
+		I32 TableSearchRelation(EntityTable* table, EntityID id, EntityID relation)
+		{
+			if (table == nullptr)
+				return -1;
+
+			return -1;
+		}
+
 		I32 TableSearchType(EntityTable* table, EntityID compID)
 		{
 			if (table == nullptr)
@@ -2918,7 +2926,7 @@ namespace ECS
 
 		if (!isRoot)
 		{
-			// Remove from hashMap
+			// Only non-root table insert into HashMap 
 			world->tableTypeHashMap.erase(EntityTypeHash(type));
 		}
 
@@ -2958,7 +2966,7 @@ namespace ECS
 							&storageColumns[col],
 							entities.data(),
 							storageIDs[col],
-							row,
+							(I32)row,
 							1);
 					}
 
@@ -3192,7 +3200,7 @@ namespace ECS
 			}
 		}
 
-		I32 totalCount = type.size() + relations.size() + objects.size();
+		size_t totalCount = type.size() + relations.size() + objects.size();
 		if (!hasChildOf)
 			totalCount++;
 
@@ -3206,7 +3214,7 @@ namespace ECS
 			index++;
 		}
 		
-		// Relations
+		// Relations (Record all relations which table used)
 		for (auto kvp : relations)
 		{
 			EntityID type = ECS_MAKE_PAIR(kvp.first, EcsPropertyNone);
@@ -3214,7 +3222,7 @@ namespace ECS
 			index++;
 		}
 
-		// Objects
+		// Objects (Record all objects which table used)
 		for (auto kvp : objects)
 		{
 			EntityID type = ECS_MAKE_PAIR(EcsPropertyNone, kvp.first);

@@ -38,6 +38,39 @@ namespace Util
 #error "Not supported"
 #endif
 
+	namespace _ {
+		struct PairBase {};
+	}
+
+	template<typename T, typename U>
+	struct Pair : _::PairBase
+	{
+		using First = T;
+		using Second = U;
+		using RealType = std::conditional_t<!std::is_empty_v<T>&& std::is_empty_v<U>, T, U>;
+	};
+
+	template<typename T>
+	struct IsPair
+	{
+		static constexpr bool value = std::is_base_of<_::PairBase, std::remove_cv_t<T>>::value;
+	};
+
+	template<typename T, typename U = int>
+	struct RealType;
+
+	template<typename T>
+	struct RealType<T, std::enable_if_t<IsPair<T>::value, int>>
+	{
+		using type = typename T::RealType;
+	};
+
+	template<typename T>
+	struct RealType<T, std::enable_if_t<!IsPair<T>::value, int>>
+	{
+		using type = T;
+	};
+
 	inline size_t NextPowOf2(size_t n)
 	{
 		n--;

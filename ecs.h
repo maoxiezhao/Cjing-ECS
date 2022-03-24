@@ -21,6 +21,12 @@ namespace ECS
 	static const EntityID INVALID_ENTITY = 0;
 	static const EntityType EMPTY_ENTITY_TYPE = EntityType();
 	static const size_t MAX_QUERY_ITEM_COUNT = 16;
+	extern const size_t ENTITY_PAIR_FLAG;
+
+#define ECS_ENTITY_HI(e) (static_cast<U32>((e) >> 32))
+#define ECS_ENTITY_LOW(e) (static_cast<U32>(e))
+#define ECS_ENTITY_COMBO(lo, hi) ((static_cast<U64>(hi) << 32) + static_cast<U32>(lo))
+#define ECS_MAKE_PAIR(re, obj) (ENTITY_PAIR_FLAG | ECS_ENTITY_COMBO(obj, re))
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Components
@@ -45,6 +51,7 @@ public:                                                   \
 	using CompCopyCtorFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr);
 	using CompMoveCtorFunc = void(*)(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr);
 
+	// Component reflect info
 	namespace Reflect
 	{
 		struct ReflectInfo
@@ -64,25 +71,46 @@ public:                                                   \
 		static void Register(World& world, EntityID compID);
 	}
 
-	template<typename C>
-	struct ComponentTypeRegister
+	// Component id register
+	namespace _
 	{
-		static size_t size;
-		static size_t alignment;
-		static EntityID componentID;
+		template<typename C>
+		struct ComponentTypeRegister
+		{
+			static size_t size;
+			static size_t alignment;
+			static EntityID componentID;
 
-		static EntityID ComponentID(World& world);
+			static EntityID ID(World& world);
 
-	private:
-		static EntityID RegisterComponent(World& world, size_t size, size_t alignment, const char* name = nullptr);
-		static bool Registered(World& world);
+		private:
+			static EntityID RegisterComponent(World& world, size_t size, size_t alignment, const char* name = nullptr);
+			static bool Registered(World& world);
+		};
+		template<typename C>
+		size_t ComponentTypeRegister<C>::size = 0;
+		template<typename C>
+		size_t ComponentTypeRegister<C>::alignment = 0;
+		template<typename C>
+		EntityID ComponentTypeRegister<C>::componentID = INVALID_ENTITY;
+	}
+
+	template<typename C, typename U = int>
+	struct ComponentType;
+
+	template<typename C>
+	struct ComponentType<C, std::enable_if_t<!Util::IsPair<C>::value, int>> : _::ComponentTypeRegister<C> {};
+
+	template<typename C>
+	struct ComponentType<C, std::enable_if_t<Util::IsPair<C>::value, int>>
+	{
+		static EntityID ID(World& world)
+		{
+			EntityID relation = _::ComponentTypeRegister<C::First>::ID(world);
+			EntityID object = _::ComponentTypeRegister<C::Second>::ID(world);
+			return ECS_MAKE_PAIR(relation, object);
+		}
 	};
-	template<typename C>
-	size_t ComponentTypeRegister<C>::size = 0;
-	template<typename C>
-	size_t ComponentTypeRegister<C>::alignment = 0;
-	template<typename C>
-	EntityID ComponentTypeRegister<C>::componentID = INVALID_ENTITY;
 
 	struct ComponentTypeInfo
 	{
@@ -174,6 +202,8 @@ public:                                                   \
 
 		static ECS_UNIQUE_PTR<World> Create();
 
+		///////////////////////////////////////////////////////////////////////////
+		// Entity
 		virtual const EntityBuilder& CreateEntity(const char* name) = 0;
 		virtual const EntityBuilder& CreatePrefab(const char* name) = 0;
 		virtual EntityID CreateEntityID(const char* name) = 0;
@@ -188,13 +218,15 @@ public:                                                   \
 		virtual EntityID GetParent(EntityID entity) = 0;
 		virtual EntityID GetRelationObject(EntityID entity, EntityID relation, U32 index = 0) = 0;
 
+		///////////////////////////////////////////////////////////////////////////
+		// Component
 		virtual void* GetComponent(EntityID entity, EntityID compID) = 0;
 		virtual bool HasComponent(EntityID entity, EntityID compID) = 0;
 
 		template<typename C>
 		bool HasComponent(EntityID entity)
 		{
-			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
+			EntityID compID = ComponentType<C>::ID(*this);
 			return HasComponent(compID, compID);
 		}
 
@@ -204,17 +236,32 @@ public:                                                   \
 			return static_cast<C*>(GetComponent(entity, C::GetComponentID()));
 		}
 
+		template <typename R, typename O, typename P = Util::Pair<R, O>, typename C = typename Util::RealType<P>::type>
+		C* GetComponent(EntityID entity)
+		{
+			EntityID compID = ComponentType<P>::ID(*this);
+			return static_cast<C*>(GetComponent(entity, compID));
+		}
+
 		template<typename C>
 		C* GetSingletonComponent()
 		{
-			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
+			EntityID compID = ComponentType<C>::ID(*this);
 			return static_cast<C*>(GetOrCreateComponent(compID, compID));
 		}
 
 		template<typename C>
 		void AddComponent(EntityID entity, const C& comp)
 		{
-			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
+			EntityID compID = ComponentType<C>::ID(*this);
+			C* dstComp = static_cast<C*>(GetOrCreateComponent(entity, compID));
+			*dstComp = comp;
+		}
+
+		template<typename T, typename C>
+		void AddComponent(EntityID entity, const C& comp)
+		{
+			EntityID compID = ComponentType<T>::ID(*this);
 			C* dstComp = static_cast<C*>(GetOrCreateComponent(entity, compID));
 			*dstComp = comp;
 		}
@@ -222,26 +269,20 @@ public:                                                   \
 		template<typename C>
 		void AddComponent(EntityID entity)
 		{
-			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
+			EntityID compID = ComponentType<C>::ID(*this);
 			AddComponent(entity, compID);
 		}
 
 		template<typename C>
 		void RemoveComponent(EntityID entity)
 		{
-			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
-		}
-
-		template<typename C>
-		void RegisterComponent()
-		{
-			ComponentTypeRegister<C>::ComponentID(*this);
+			EntityID compID = ComponentType<C>::ID(*this);
 		}
 
 		template<typename C>
 		void AddRelation(EntityID entity, EntityID relation)
 		{
-			EntityID compID = ComponentTypeRegister<C>::ComponentID(*this);
+			EntityID compID = ComponentType<C>::ID(*this);
 			AddRelation(entity, relation, compID);
 		}
 
@@ -255,11 +296,15 @@ public:                                                   \
 		virtual void AddComponent(EntityID entity, EntityID compID) = 0;
 		virtual void RemoveComponent(EntityID entity, EntityID compID) = 0;
 
+		///////////////////////////////////////////////////////////////////////////
+		// System
 		template<typename... Args>
 		SystemBuilder<Args...> CreateSystem();
 		virtual EntityID InitNewSystem(const SystemCreateDesc& desc) = 0;
 		virtual void RunSystem(EntityID entity) = 0;
 
+		///////////////////////////////////////////////////////////////////////////
+		// Query
 		template<typename... Comps>
 		Query<Comps...> CreateQuery();
 		virtual QueryID CreateQuery(const QueryCreateDesc& desc) = 0;
@@ -295,8 +340,16 @@ public:                                                   \
 		template <typename R, typename O>
 		const EntityBuilder& With() const
 		{
-			EntityID relation = ComponentTypeRegister<R>::ComponentID(*world);
+			EntityID relation = ComponentType<R>::ID(*world);
 			world->AddRelation<O>(entity, relation);
+			return *this;
+		}
+
+		template <typename R, typename O>
+		const EntityBuilder& With(const R& comp) const
+		{
+			using Pair = Util::Pair<R, O>;
+			world->AddComponent<Pair>(entity, comp);
 			return *this;
 		}
 
@@ -323,53 +376,56 @@ public:                                                   \
 	//// ComponentTypeRegister
 	////////////////////////////////////////////////////////////////////////////////
 
-	template<typename C>
-	inline EntityID ComponentTypeRegister<C>::ComponentID(World& world)
+	namespace _
 	{
-		if (!Registered(world))
+		template<typename C>
+		inline EntityID ComponentTypeRegister<C>::ID(World& world)
 		{
-			size = sizeof(C);
-			alignment = alignof(C);
-
-			// In default case, the size of empty struct is 1
-			if (std::is_empty_v<C>)
+			if (!Registered(world))
 			{
-				size = 0;
-				alignment = 0;
+				size = sizeof(C);
+				alignment = alignof(C);
+
+				// In default case, the size of empty struct is 1
+				if (std::is_empty_v<C>)
+				{
+					size = 0;
+					alignment = 0;
+				}
+
+				// Register component
+				componentID = RegisterComponent(world, size, alignment);
+				// Register reflect info
+
+				if (size > 0)
+					Reflect::Register<C>(world, componentID);
 			}
-
-			// Register component
-			componentID = RegisterComponent(world, size, alignment);
-			// Register reflect info
-
-			if (size > 0)
-				Reflect::Register<C>(world, componentID);
+			return componentID;
 		}
-		return componentID;
-	}
 
-	template<typename C>
-	inline EntityID ComponentTypeRegister<C>::RegisterComponent(World& world, size_t size, size_t alignment, const char* name)
-	{
-		const char* n = name;
-		if (n == nullptr)
-			n = Util::Typename<C>();
+		template<typename C>
+		inline EntityID ComponentTypeRegister<C>::RegisterComponent(World& world, size_t size, size_t alignment, const char* name)
+		{
+			const char* n = name;
+			if (n == nullptr)
+				n = Util::Typename<C>();
 
-		ComponentCreateDesc desc = {};
-		desc.entity.entity = INVALID_ENTITY;
-		desc.entity.name = n;
-		desc.entity.useComponentID = true;
-		desc.size = size;
-		desc.alignment = alignment;
-		EntityID ret = world.InitNewComponent(desc);
-		C::componentID = ret;
-		return ret;
-	}
+			ComponentCreateDesc desc = {};
+			desc.entity.entity = INVALID_ENTITY;
+			desc.entity.name = n;
+			desc.entity.useComponentID = true;
+			desc.size = size;
+			desc.alignment = alignment;
+			EntityID ret = world.InitNewComponent(desc);
+			C::componentID = ret;
+			return ret;
+		}
 
-	template<typename C>
-	bool ComponentTypeRegister<C>::Registered(World& world)
-	{
-		return componentID != INVALID_ENTITY && world.IsEntityAlive(componentID);
+		template<typename C>
+		bool ComponentTypeRegister<C>::Registered(World& world)
+		{
+			return componentID != INVALID_ENTITY && world.IsEntityAlive(componentID);
+		}
 	}
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -482,7 +538,7 @@ public:                                                   \
 	public:
 		Query(World* world_) :
 			world(world_),
-			compIDs({ (ComponentTypeRegister<Comps>::ComponentID(*world_))... })
+			compIDs({ (ComponentType<Comps>::ID(*world_))... })
 		{
 			for (int i = 0; i < compIDs.size(); i++)
 			{
@@ -553,7 +609,7 @@ public:                                                   \
 	public:
 		SystemBuilder(World* world_) : 
 			world(world_),
-			compIDs({ (ComponentTypeRegister<Comps>::ComponentID(*world_))... })
+			compIDs({ (ComponentType<Comps>::ID(*world_))... })
 		{
 			auto& queryDesc = desc.query;
 			for (int i = 0; i < compIDs.size(); i++)
