@@ -162,7 +162,7 @@ namespace ECS
 	// Dual link list to manage TableRecords
 	struct EntityTableCacheItem : Util::ListNode<EntityTableCacheItem>
 	{
-		struct EntityTableCache* cache = nullptr;
+		struct EntityTableCacheBase* tableCache = nullptr;
 		EntityTable* table = nullptr;	// -> Owned table
 		bool empty = false;
 	};
@@ -173,11 +173,27 @@ namespace ECS
 		Util::ListNode<EntityTableCacheItem>* next = nullptr;
 	};
 
-	struct EntityTableCache
+	template<typename T>
+	struct EntityTableCacheItemInst : EntityTableCacheItem
+	{
+		T data;
+	};
+
+	struct EntityTableCacheBase
 	{
 		Hashmap<EntityTableCacheItem*> tableRecordMap; // <TableID, CacheItem>
 		Util::List<EntityTableCacheItem> tables;
 		Util::List<EntityTableCacheItem> emptyTables;
+	};
+
+	template<typename T, typename = int>
+	struct EntityTableCache {};
+
+	template<typename T>
+	struct EntityTableCache<T, std::enable_if_t<std::is_base_of_v<EntityTableCacheItem, T>, int>> : EntityTableCacheBase
+	{
+		void InsertTableIntoCache(WorldImpl* world, const EntityTable* table, T* cacheNode);
+		T* RemoveTableFromCache(WorldImpl* world, EntityTable* table);
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -195,13 +211,13 @@ namespace ECS
 		TableFlagHasMove = 1 << 6,
 	};
 
-	struct TableComponentRecord
+	struct TableComponentRecordData
 	{
-		EntityTableCacheItem header;	// Table list which use this component
 		U64 compID = 0;
 		I32 column = 0;					// The column of comp in target table
 		I32 count = 0;
 	};
+	using TableComponentRecord = EntityTableCacheItemInst<TableComponentRecordData>;
 
 	using ComponentColumnData = Util::StorageVector;
 
@@ -255,7 +271,7 @@ namespace ECS
 
 	struct ComponentRecord
 	{
-		EntityTableCache cache;			// TableComponentRecords
+		EntityTableCache<TableComponentRecord> cache;
 		bool typeInfoInited = false;
 		ComponentTypeInfo* typeInfo = nullptr;
 	};
@@ -275,12 +291,12 @@ namespace ECS
 		size_t* sizes = nullptr;
 	};
 
-	struct QueryTableCache
+	struct QueryTableCacheData
 	{
-		EntityTableCacheItem header;
 		QueryTableMatch* first = nullptr;
 		QueryTableMatch* last = nullptr;
 	};
+	using QueryTableCache = EntityTableCacheItemInst<QueryTableCacheData>;
 
 	// TODO: too heavy
 	struct QueryImpl
@@ -291,7 +307,7 @@ namespace ECS
 		QueryItem queryItemSmallCache[QUERY_ITEM_SMALL_CACHE_SIZE];
 		I32 itemCount;
 
-		EntityTableCache matchedTableCache;			   // All matched tables <QueryTableCache>
+		EntityTableCache<QueryTableCache> matchedTableCache; // All matched tables <QueryTableCache>
 		Util::List<QueryTableMatch> nonEmtpyTableList; // Non-empty tables
 
 		I32 matchingCount = 0;
@@ -631,10 +647,10 @@ namespace ECS
 			if (record == nullptr)
 				return INVALID_ENTITY;
 	
-			if (index >= (U32)record->count)
+			if (index >= (U32)record->data.count)
 				return INVALID_ENTITY;
 
-			return ECS_GET_PAIR_SECOND(table->type[record->column + index]);
+			return ECS_GET_PAIR_SECOND(table->type[record->data.column + index]);
 		}
 
 		void* GetComponent(EntityID entity, EntityID compID) override
@@ -651,7 +667,7 @@ namespace ECS
 			if (tableRecord == nullptr)
 				return nullptr;
 
-			return GetComponentPtrFromTable(*info->table, info->row, tableRecord->column);
+			return GetComponentPtrFromTable(*info->table, info->row, tableRecord->data.column);
 		}
 
 		bool HasComponent(EntityID entity, EntityID compID) override
@@ -859,15 +875,15 @@ namespace ECS
 		{
 			QueryTableMatch* tableMatch = ECS_CALLOC_T(QueryTableMatch);
 			ECS_ASSERT(tableMatch);
-			if (cache->first == nullptr)
+			if (cache->data.first == nullptr)
 			{
-				cache->first = tableMatch;
-				cache->last = tableMatch;
+				cache->data.first = tableMatch;
+				cache->data.last = tableMatch;
 			}
 			else
 			{
-				cache->last->next = tableMatch;
-				cache->last = tableMatch;
+				cache->data.last->next = tableMatch;
+				cache->data.last = tableMatch;
 			}
 			return tableMatch;
 		}
@@ -954,7 +970,7 @@ namespace ECS
 			// Add table into query cache
 			QueryTableCache* node = ECS_CALLOC_T(QueryTableCache);
 			ECS_ASSERT(node != nullptr);
-			InsertTableIntoCache(&query->matchedTableCache, table, &node->header);
+			query->matchedTableCache.InsertTableIntoCache(this, table, node);
 
 			// Create new tableMatch
 			QueryTableMatch* tableMatch = QueryAddTableMatchForCache(node);
@@ -1006,7 +1022,7 @@ namespace ECS
 
 		void QueryUnmatchTable(QueryImpl* query, EntityTable* table)
 		{
-			EntityTableCacheItem* item = RemoveTableFromCache(&query->matchedTableCache, table);
+			QueryTableCache* item = query->matchedTableCache.RemoveTableFromCache(this, table);
 			if (item != nullptr)
 				QueryFreeTableCache(query, item);
 		}
@@ -1079,11 +1095,10 @@ namespace ECS
 			return ret;
 		}
 
-		void QueryFreeTableCache(QueryImpl*query, EntityTableCacheItem* node)
+		void QueryFreeTableCache(QueryImpl*query, QueryTableCache* queryTable)
 		{
-			QueryTableCache* queryTable = reinterpret_cast<QueryTableCache*>(node);
 			Util::ListNode<QueryTableMatch>* cur, * next;
-			for (cur = queryTable->first; cur != nullptr; cur = next)
+			for (cur = queryTable->data.first; cur != nullptr; cur = next)
 			{
 				QueryTableMatch* match = cur->Cast();
 				ECS_FREE(match->componentIDs);
@@ -1091,14 +1106,13 @@ namespace ECS
 				ECS_FREE(match->sizes);
 
 				// Remove Non-emtpy table
-				if (!queryTable->header.empty)
+				if (!queryTable->empty)
 					QueryRemoveTableMatchNode(query, match);
 
 				next = cur->next;
 				ECS_FREE(cur);
 			}
-
-			ECS_FREE(node);
+			ECS_FREE(queryTable);
 		}
 
 		void FiniQuery(QueryImpl* query)
@@ -1108,15 +1122,16 @@ namespace ECS
 
 			if (query->cached)
 			{
-				// Free table cache 
-				EntityTableCacheItem* node = nullptr;
+				// TODO: reinterpret_cast 
+				// Free query table cache 
+				QueryTableCache* cache = nullptr;
 				EntityTableCacheIterator iter = GetTableCacheListIter(&query->matchedTableCache, false);
-				while (node = GetTableCacheListIterNext(iter))
-					QueryFreeTableCache(query, node);
+				while (cache = (QueryTableCache*)GetTableCacheListIterNext(iter))
+					QueryFreeTableCache(query, cache);
 
 				iter = GetTableCacheListIter(&query->matchedTableCache, true);
-				while (node = GetTableCacheListIterNext(iter))
-					QueryFreeTableCache(query, node);
+				while (cache = (QueryTableCache*)GetTableCacheListIterNext(iter))
+					QueryFreeTableCache(query, cache);
 			}
 
 			queryPool.Remove(query->queryID);
@@ -1270,7 +1285,7 @@ namespace ECS
 					if (tableRecord == nullptr)
 						return false;
 
-					EntityTable* table = tableRecord->header.table;
+					EntityTable* table = tableRecord->table;
 					if (table == nullptr)
 						return false;
 
@@ -1279,8 +1294,8 @@ namespace ECS
 
 					itemIter->table = table;
 					itemIter->curMatch = 0;
-					itemIter->matchCount = tableRecord->count;
-					itemIter->column = tableRecord->column;
+					itemIter->matchCount = tableRecord->data.count;
+					itemIter->column = tableRecord->data.column;
 					break;
 				}
 			} while (true);
@@ -1567,7 +1582,7 @@ namespace ECS
 			TableComponentRecord* tableRecord = nullptr;
 			while (tableRecord = (TableComponentRecord*)(GetTableCacheListIterNext(cacheIter)))
 			{
-				if (!tableRecord->header.table->Release())
+				if (!tableRecord->table->Release())
 					return false;
 			}
 
@@ -1747,7 +1762,7 @@ namespace ECS
 			// Register component and init component type info
 			ComponentRecord* compRecord = EnsureComponentRecord(compID);
 			ECS_ASSERT(compRecord != nullptr);
-			InsertTableIntoCache(&compRecord->cache, table, &tableRecord.header);
+			compRecord->cache.InsertTableIntoCache(this, table, &tableRecord);
 
 			// Init component type info
 			if (!compRecord->typeInfoInited)
@@ -1762,9 +1777,9 @@ namespace ECS
 			}
 
 			// Init component table record
-			tableRecord.compID = compID;
-			tableRecord.column = column;	// Index for component from entity type
-			tableRecord.count = count;
+			tableRecord.data.compID = compID;
+			tableRecord.data.column = column;	// Index for component from entity type
+			tableRecord.data.count = count;
 
 			return true;
 		}
@@ -1941,7 +1956,7 @@ namespace ECS
 			if (tableRecord == nullptr)
 				return nullptr;
 
-			return GetComponentPtrFromTable(table, row, tableRecord->column);
+			return GetComponentPtrFromTable(table, row, tableRecord->data.column);
 		}
 
 		void* GetComponentPtrFromTable(EntityTable& table, I32 row, I32 column)
@@ -2112,7 +2127,7 @@ namespace ECS
 			if (record == nullptr)
 				return -1;
 
-			return record->column;
+			return record->data.column;
 		}
 
 		EntityTable* FindOrCreateTableWithIDs(const Vector<EntityID>& compIDs)
@@ -2591,6 +2606,10 @@ namespace ECS
 			}
 		}
 
+		////////////////////////////////////////////////////////////////////////////////
+		//// Table cache
+		////////////////////////////////////////////////////////////////////////////////
+
 		EntityTableCacheItem* GetTableCacheListIterNext(EntityTableCacheIterator& iter)
 		{
 			Util::ListNode<EntityTableCacheItem>* next = iter.next;
@@ -2602,11 +2621,7 @@ namespace ECS
 			return static_cast<EntityTableCacheItem*>(next);
 		}
 
-		////////////////////////////////////////////////////////////////////////////////
-		//// Table cache
-		////////////////////////////////////////////////////////////////////////////////
-
-		EntityTableCacheIterator GetTableCacheListIter(EntityTableCache* cache, bool emptyTable)
+		EntityTableCacheIterator GetTableCacheListIter(EntityTableCacheBase* cache, bool emptyTable)
 		{
 			EntityTableCacheIterator iter = {};
 			iter.cur = nullptr;
@@ -2614,7 +2629,7 @@ namespace ECS
 			return iter;
 		}
 
-		TableComponentRecord* GetTableRecordFromCache(EntityTableCache* cache, const EntityTable* table)
+		TableComponentRecord* GetTableRecordFromCache(EntityTableCacheBase* cache, const EntityTable* table)
 		{
 			auto it = cache->tableRecordMap.find(table->tableID);
 			if (it == cache->tableRecordMap.end())
@@ -2623,13 +2638,13 @@ namespace ECS
 			return reinterpret_cast<TableComponentRecord*>(it->second);
 		}
 
-		void InsertTableIntoCache(EntityTableCache* cache, const EntityTable* table, EntityTableCacheItem* cacheNode)
+		void InsertTableIntoCache(EntityTableCacheBase* cache, const EntityTable* table, EntityTableCacheItem* cacheNode)
 		{
 			ECS_ASSERT(table != nullptr);
 			ECS_ASSERT(cacheNode != nullptr);
 
 			bool empty = table->entities.empty();
-			cacheNode->cache = cache;
+			cacheNode->tableCache = cache;
 			cacheNode->table = (EntityTable*)(table);
 			cacheNode->empty = empty;
 
@@ -2637,7 +2652,7 @@ namespace ECS
 			InsertTableCacheNode(cache, cacheNode, empty);
 		}
 
-		EntityTableCacheItem* RemoveTableFromCache(EntityTableCache* cache, EntityTable* table)
+		EntityTableCacheItem* RemoveTableFromCache(EntityTableCacheBase* cache, EntityTable* table)
 		{
 			auto it = cache->tableRecordMap.find(table->tableID);
 			if (it == cache->tableRecordMap.end())
@@ -2653,7 +2668,7 @@ namespace ECS
 			return node;
 		}
 
-		void InsertTableCacheNode(EntityTableCache* cache, EntityTableCacheItem* node, bool isEmpty)
+		void InsertTableCacheNode(EntityTableCacheBase* cache, EntityTableCacheItem* node, bool isEmpty)
 		{
 			Util::List<EntityTableCacheItem>& list = isEmpty ? cache->emptyTables : cache->tables;
 			Util::ListNode<EntityTableCacheItem>* last = list.last;
@@ -2669,7 +2684,7 @@ namespace ECS
 				last->next = node;
 		}
 
-		void RemoveTableCacheNode(EntityTableCache* cache, EntityTableCacheItem* node, bool isEmpty)
+		void RemoveTableCacheNode(EntityTableCacheBase* cache, EntityTableCacheItem* node, bool isEmpty)
 		{
 			Util::List<EntityTableCacheItem>& list = isEmpty ? cache->emptyTables : cache->tables;
 			if (node->prev != nullptr)
@@ -2685,7 +2700,7 @@ namespace ECS
 				list.last = node->prev;
 		}
 
-		void SetTableCacheState(EntityTableCache* cache, EntityTable* table, bool isEmpty)
+		void SetTableCacheState(EntityTableCacheBase* cache, EntityTable* table, bool isEmpty)
 		{
 			auto it = cache->tableRecordMap.find(table->tableID);
 			if (it == cache->tableRecordMap.end())
@@ -3241,18 +3256,18 @@ namespace ECS
 		for (size_t i = 0; i < tableRecords.size(); i++)
 		{
 			TableComponentRecord* tableRecord = &tableRecords[i];
-			EntityTableCache* cache = tableRecord->header.cache;
+			EntityTableCacheBase* cache = tableRecord->tableCache;
 			if (cache == nullptr)
 				continue;
 
-			ECS_ASSERT(tableRecord->header.table == this);
+			ECS_ASSERT(tableRecord->table == this);
 
 			world->RemoveTableFromCache(cache, this);
 
 			if (cache->tableRecordMap.empty())
 			{
 				ComponentRecord* compRecord = reinterpret_cast<ComponentRecord*>(cache);
-				world->RemoveComponentRecord(tableRecord->compID, compRecord);
+				world->RemoveComponentRecord(tableRecord->data.compID, compRecord);
 			}
 		}
 		tableRecords.clear();
@@ -3291,7 +3306,7 @@ namespace ECS
 		for (U32 i = 0; i < type.size(); i++)
 		{
 			TableComponentRecord& tableRecord = tableRecords[i];
-			ComponentRecord* compRecord = reinterpret_cast<ComponentRecord*>(tableRecord.header.cache);
+			ComponentRecord* compRecord = reinterpret_cast<ComponentRecord*>(tableRecord.tableCache);
 			// We sure all component types is initialized in RegisterTableComponentRecords
 			ECS_ASSERT(compRecord->typeInfoInited);
 
@@ -3376,10 +3391,10 @@ namespace ECS
 		for (int i = 0; i < type.size(); i++)
 		{
 			TableComponentRecord* tableRecord = &tableRecords[i];
-			ComponentRecord* compRecord = reinterpret_cast<ComponentRecord*>(tableRecord->header.cache);
+			ComponentRecord* compRecord = reinterpret_cast<ComponentRecord*>(tableRecord->tableCache);
 			ECS_ASSERT(compRecord != nullptr && compRecord->typeInfoInited);
 			compTypeInfos[i] = *compRecord->typeInfo;
-
+			
 			Reflect::ReflectInfo& reflectInfo = compRecord->typeInfo->reflectInfo;
 			if (reflectInfo.ctor)
 				flags |= TableFlagHasCtors;
@@ -3390,6 +3405,18 @@ namespace ECS
 			if (reflectInfo.move)
 				flags |= TableFlagHasMove;
 		}
+	}
+
+	template<typename T>
+	void EntityTableCache<T, std::enable_if_t<std::is_base_of_v<EntityTableCacheItem, T>, int>>::InsertTableIntoCache(WorldImpl* world, const EntityTable* table, T* cacheNode)
+	{
+		world->InsertTableIntoCache(this, table, cacheNode);
+	}
+
+	template<typename T>
+	T* EntityTableCache<T, std::enable_if_t<std::is_base_of_v<EntityTableCacheItem, T>, int>>::RemoveTableFromCache(WorldImpl* world, EntityTable* table)
+	{
+		return reinterpret_cast<T*>(world->RemoveTableFromCache(this, table));
 	}
 
 	////////////////////////////////////////////////////////////////////////////////
