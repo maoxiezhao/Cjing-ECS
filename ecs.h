@@ -122,9 +122,22 @@ namespace ECS
 		size_t size = 0;
 	};
 
+	enum QueryItemFlag
+	{
+		QueryItemFlagParent = 1 << 0,
+		QueryItemFlagCascade = 1 << 1
+	};
+
+	struct QueryItemSet
+	{
+		U32 flags;
+	};
+
 	struct QueryItem
 	{
 		EntityID compID;
+		EntityID obj;
+		QueryItemSet set;
 	};
 
 	struct QueryIteratorImpl;
@@ -562,6 +575,27 @@ namespace ECS
 			return *this;
 		}
 
+		Query& Item(I32 index)
+		{
+			currentItem = &desc.items[index];
+			return *this;
+		}
+
+		template<typename C>
+		Query& Obj()
+		{
+			assert(currentItem != nullptr);
+			currentItem->obj = ComponentType<C>::ID(*world);
+			return *this;
+		}
+
+		Query& Set(U32 flags)
+		{
+			assert(currentItem != nullptr);
+			currentItem->set.flags = flags;
+			return *this;
+		}
+
 		template<typename Func>
 		void ForEach(Func&& func)
 		{
@@ -576,6 +610,7 @@ namespace ECS
 		Array<U64, sizeof...(Comps)> compIDs;
 		QueryID queryID = 0;
 		QueryCreateDesc desc = {};
+		QueryItem* currentItem = nullptr;
 	};
 
 	template<typename... Comps>

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <type_traits>
 #include <assert.h>
+#include <map>
 #include <unordered_map>
 #include <array>
 #include <type_traits>
@@ -18,6 +19,9 @@ using I32 = int32_t;
 using I64 = int64_t;
 
 // Container
+template<typename Value>
+using Map = std::map<U64, Value>;
+
 template<typename Value>
 using Hashmap = std::unordered_map<U64, Value>;
 

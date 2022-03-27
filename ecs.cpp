@@ -290,7 +290,10 @@ namespace ECS
 		U64* componentIDs = nullptr;
 		I32* columns = nullptr;
 		size_t* sizes = nullptr;
+		U64 groupID = 0;
 	};
+
+	using QueryTableMatchList = Util::List<QueryTableMatch>;
 
 	struct QueryTableCacheData
 	{
@@ -298,6 +301,11 @@ namespace ECS
 		QueryTableMatch* last = nullptr;
 	};
 	using QueryTableCache = EntityTableCacheItemInst<QueryTableCacheData>;
+
+	enum QueryFlag
+	{
+		QueryFlagOptional = 1 << 0,
+	};
 
 	// TODO: too heavy
 	struct QueryImpl
@@ -307,12 +315,18 @@ namespace ECS
 		Vector<QueryItem> queryItemsCache;
 		QueryItem queryItemSmallCache[QUERY_ITEM_SMALL_CACHE_SIZE];
 		I32 itemCount;
-
-		EntityTableCache<QueryTableCache> matchedTableCache; // All matched tables <QueryTableCache>
-		Util::List<QueryTableMatch> nonEmtpyTableList; // Non-empty tables
-
+		I32 sortByItemIndex = 0;
+		U32 flags = 0;
 		I32 matchingCount = 0;
 		bool cached = false;
+
+		EntityTableCache<QueryTableCache> matchedTableCache; // All matched tables <QueryTableCache>
+		QueryTableMatchList nonEmtpyTableList; // Non-empty tables
+
+		// Group
+		EntityID groupByID = INVALID_ENTITY;
+		QueryItem* groupByItem = nullptr;
+		Map<QueryTableMatchList> groups;
 	};
 
 	struct QueryItemIterator
@@ -890,10 +904,85 @@ namespace ECS
 			return tableMatch;
 		}
 
+		QueryTableMatch* FindGroupInsertionNode(QueryImpl* query, U64 groupID)
+		{
+			assert(query->groupByID != INVALID_ENTITY);
+			
+			QueryTableMatchList* targetList = nullptr;
+			U64 targetGroupID = 0;
+
+			// Find closest group id
+			for (auto& kvp : query->groups)
+			{
+				if (kvp.first >= groupID)
+					continue;
+
+				QueryTableMatchList& list = kvp.second;
+				if (list.last == nullptr)
+					continue;
+
+				if (targetList == nullptr || (groupID - kvp.first) < (groupID - targetGroupID))
+				{
+					targetList = &list;
+					targetGroupID = kvp.first;
+				}
+			}
+
+			if (targetList != nullptr)
+				return targetList->last->Cast();
+
+			return  nullptr;
+		}
+
+		void QueryCreateGroup(QueryImpl* query, QueryTableMatch* node)
+		{
+			QueryTableMatch* target = FindGroupInsertionNode(query, node->groupID);
+			if (target == nullptr)
+			{
+				// Insert into non-empty matching list
+				QueryTableMatchList& list = query->nonEmtpyTableList;
+				if (list.first)
+				{
+					node->next = list.first;
+					list.first->prev = node;
+					list.first = node;
+				}
+				else
+				{
+					list.first = node;
+					list.last = node;
+				}
+
+			}
+		}
+
+		QueryTableMatchList& Ensure(QueryImpl* query, QueryTableMatch* node)
+		{
+			if (query->groupByID != INVALID_ENTITY)
+				return query->groups[node->groupID];
+			else
+				return query->nonEmtpyTableList;
+		}
+
+		// Compute group id by cascade
+		// Traverse the hierarchy of an component type by parent relation (Parent-Children)
+		U64 ComputeGroupIDByCascade(QueryImpl* query, QueryTableMatch* node)
+		{
+			// TODO
+			return 0;
+		}
+
 		void QueryInsertTableMatchNode(QueryImpl* query, QueryTableMatch* node)
 		{
+			// Insert query matching table in cache list
+			// If table need to group, need to manage a group list
+			if (query->queryID != INVALID_ENTITY)
+				node->groupID = ComputeGroupIDByCascade(query, node);
+			else
+				node->groupID = 0;
+
 			ECS_ASSERT(node->prev == nullptr && node->next == nullptr);
-			Util::List<QueryTableMatch>& list = query->nonEmtpyTableList;
+			QueryTableMatchList& list = Ensure(query, node);
 			if (list.last)
 			{
 				Util::ListNode<QueryTableMatch>* last = list.last;
@@ -906,11 +995,20 @@ namespace ECS
 					lastNext->prev = node;
 
 				list.last = node;
+
+				if (query->groupByID != INVALID_ENTITY)
+				{
+
+				}
 			}
 			else
 			{
 				list.first = node;
 				list.last = node;
+
+				// Init a new group for first node
+				if (query->groupByID != INVALID_ENTITY)
+					QueryCreateGroup(query, node);
 			}
 
 			list.count++;
@@ -928,7 +1026,7 @@ namespace ECS
 				next->prev = prev;
 
 
-			Util::List<QueryTableMatch>& list = query->nonEmtpyTableList;
+			QueryTableMatchList& list = query->nonEmtpyTableList;
 			ECS_ASSERT(list.count > 0);
 			list.count--;
 
@@ -1048,6 +1146,19 @@ namespace ECS
 			}
 		}
 
+		void ProcessQueryFlags(QueryImpl* query)
+		{
+			for (int i = 0; i < query->itemCount; i++)
+			{
+				QueryItem& queryItem = query->queryItems[i];
+				if (queryItem.set.flags & QueryItemFlagCascade)
+				{
+					assert(query->sortByItemIndex == 0);
+					query->sortByItemIndex = i + 1;
+				}
+			}
+		}
+
 		// Create a new query
 		QueryImpl* InitNewQuery(const QueryCreateDesc& desc)
 		{
@@ -1084,6 +1195,16 @@ namespace ECS
 					itemPtr[i] = desc.items[i];
 
 				ret->queryItems = itemPtr;
+			}
+
+			// Parse query flags
+			ProcessQueryFlags(ret);
+
+			// Set group context
+			if (ret->sortByItemIndex > 0)
+			{
+				ret->groupByID = ret->queryItems[ret->sortByItemIndex - 1].compID;
+				ret->groupByItem = &ret->queryItems[ret->sortByItemIndex - 1];
 			}
 		
 			// Create query 
