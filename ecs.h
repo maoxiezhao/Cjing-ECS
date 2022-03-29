@@ -131,6 +131,7 @@ namespace ECS
 	struct QueryItemSet
 	{
 		U32 flags;
+		U64 relation;
 	};
 
 	struct QueryItem

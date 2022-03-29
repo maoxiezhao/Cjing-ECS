@@ -191,6 +191,16 @@ int main()
         .With<Position, Local>({ 1.0f, 1.0f })
         .With<Position, Global>({ 2.0f, 3.0f });
 
+    auto e2 = world->CreateEntity("e2")
+        .ChildOf(e1.entity)
+        .With<Position, Local>({ 1.0f, 1.0f })
+        .With<Position, Global>({ 2.0f, 3.0f });
+
+    auto e3 = world->CreateEntity("e3")
+        .ChildOf(e2.entity)
+        .With<Position, Local>({ 1.0f, 1.0f })
+        .With<Position, Global>({ 2.0f, 3.0f });
+
     Position* localPos = world->GetComponent<Position, Local>(e1.entity);
     Position* globalPos = world->GetComponent<Position, Global>(e1.entity);
 
@@ -202,6 +212,9 @@ int main()
         .Item(2)
         .Set(ECS::QueryItemFlagParent | ECS::QueryItemFlagCascade)
         .Build();
+    query.ForEach([&](ECS::EntityID entity, Position& p1, Position& p2, Position& pOut) {
+            
+    });
 
 	return 0;
 }

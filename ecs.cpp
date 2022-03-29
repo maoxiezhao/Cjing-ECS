@@ -203,13 +203,14 @@ namespace ECS
 
 	enum TableFlag
 	{
-		TableFlagIsPrefab = 1 << 0,
-		TableFlagHasIsA = 1 << 1,
-		TableFlagIsChild = 1 << 2,
-		TableFlagHasCtors = 1 << 3,
-		TableFlagHasDtors = 1 << 4,
-		TableFlagHasCopy = 1 << 5,
-		TableFlagHasMove = 1 << 6,
+		TableFlagIsPrefab    = 1 << 0,
+		TableFlagHasRelation = 1 << 1,
+		TableFlagHasIsA		 = 1 << 2,
+		TableFlagIsChild	 = 1 << 3,
+		TableFlagHasCtors	 = 1 << 4,
+		TableFlagHasDtors	 = 1 << 5,
+		TableFlagHasCopy	 = 1 << 6,
+		TableFlagHasMove	 = 1 << 7,
 	};
 
 	struct TableComponentRecordData
@@ -321,7 +322,7 @@ namespace ECS
 		bool cached = false;
 
 		EntityTableCache<QueryTableCache> matchedTableCache; // All matched tables <QueryTableCache>
-		QueryTableMatchList nonEmtpyTableList; // Non-empty tables
+		QueryTableMatchList realTableList; // Non-empty tables
 
 		// Group
 		EntityID groupByID = INVALID_ENTITY;
@@ -837,7 +838,7 @@ namespace ECS
 				sysComponent->invoker = desc.invoker;
 				sysComponent->invokerDeleter = desc.invokerDeleter;
 
-				QueryImpl* queryInfo = InitNewQuery(desc.query);
+				QueryImpl* queryInfo = CreateNewQuery(desc.query);
 				if (queryInfo == nullptr)
 					return INVALID_ENTITY;
 
@@ -871,7 +872,7 @@ namespace ECS
 
 		QueryID CreateQuery(const QueryCreateDesc& desc) override
 		{
-			QueryImpl* queryInfo = InitNewQuery(desc);
+			QueryImpl* queryInfo = CreateNewQuery(desc);
 			if (queryInfo == nullptr)
 				return INVALID_ENTITY;
 
@@ -940,7 +941,7 @@ namespace ECS
 			if (target == nullptr)
 			{
 				// Insert into non-empty matching list
-				QueryTableMatchList& list = query->nonEmtpyTableList;
+				QueryTableMatchList& list = query->realTableList;
 				if (list.first)
 				{
 					node->next = list.first;
@@ -952,37 +953,53 @@ namespace ECS
 					list.first = node;
 					list.last = node;
 				}
-
 			}
 		}
 
-		QueryTableMatchList& Ensure(QueryImpl* query, QueryTableMatch* node)
+		QueryTableMatchList& QueryEnsureTableList(QueryImpl* query, QueryTableMatch* node)
 		{
 			if (query->groupByID != INVALID_ENTITY)
 				return query->groups[node->groupID];
 			else
-				return query->nonEmtpyTableList;
+				return query->realTableList;
 		}
 
 		// Compute group id by cascade
 		// Traverse the hierarchy of an component type by parent relation (Parent-Children)
+		// to get depth, return the depth as group id
 		U64 ComputeGroupIDByCascade(QueryImpl* query, QueryTableMatch* node)
 		{
-			// TODO
-			return 0;
+			I32 depth = 0;
+			if (TableSearchRelationLast(
+				node->table,
+				query->groupByID,
+				query->groupByItem->set.relation,
+				0, 0,
+				&depth) != -1)
+				return (U64)depth;
+			else
+				return 0;
+		}
+
+		// Compute group id
+		U64 ComputeGroupID(QueryImpl* query, QueryTableMatch* node)
+		{
+			// TODO: add group type
+			return ComputeGroupIDByCascade(query, node);
 		}
 
 		void QueryInsertTableMatchNode(QueryImpl* query, QueryTableMatch* node)
 		{
-			// Insert query matching table in cache list
-			// If table need to group, need to manage a group list
+			// Compute group id
 			if (query->queryID != INVALID_ENTITY)
-				node->groupID = ComputeGroupIDByCascade(query, node);
+				node->groupID = ComputeGroupID(query, node);
 			else
 				node->groupID = 0;
 
+			// Insert query matching table in cache list
+			// If table need to group, need to manage a group list 
 			ECS_ASSERT(node->prev == nullptr && node->next == nullptr);
-			QueryTableMatchList& list = Ensure(query, node);
+			QueryTableMatchList& list = QueryEnsureTableList(query, node);
 			if (list.last)
 			{
 				Util::ListNode<QueryTableMatch>* last = list.last;
@@ -996,9 +1013,11 @@ namespace ECS
 
 				list.last = node;
 
+				// Update real table list
 				if (query->groupByID != INVALID_ENTITY)
 				{
-
+					if (query->realTableList.last == last)
+						query->realTableList.last = node;
 				}
 			}
 			else
@@ -1006,7 +1025,7 @@ namespace ECS
 				list.first = node;
 				list.last = node;
 
-				// Init a new group for first node
+				// Create table list for target group id
 				if (query->groupByID != INVALID_ENTITY)
 					QueryCreateGroup(query, node);
 			}
@@ -1019,14 +1038,12 @@ namespace ECS
 		{
 			Util::ListNode<QueryTableMatch>* next = node->next;
 			Util::ListNode<QueryTableMatch>* prev = node->prev;
-
 			if (prev)
 				prev->next = next;
 			if (next)
 				next->prev = prev;
 
-
-			QueryTableMatchList& list = query->nonEmtpyTableList;
+			QueryTableMatchList& list = query->realTableList;
 			ECS_ASSERT(list.count > 0);
 			list.count--;
 
@@ -1041,7 +1058,7 @@ namespace ECS
 			query->matchingCount--;
 		}
 
-		bool QueryCheckTableMatched(QueryImpl* query, EntityTable* table)\
+		bool QueryCheckTableMatched(QueryImpl* query, EntityTable* table)
 		{
 			if (table->type.empty())
 				return false;
@@ -1097,7 +1114,7 @@ namespace ECS
 					else
 						tableMatch->sizes[t] = 0;
 
-					//// Add one to the column, as column zero is reserved 
+					// Add one to the column, as column zero is reserved 
 					tableMatch->columns[t] = TableSearchType(table, compID);
 				}
 				else
@@ -1133,7 +1150,6 @@ namespace ECS
 			if (query->itemCount <= 0)
 				return;
 
-
 			// Check all exsiting tables
 			size_t tabelCount = tablePool.Count();
 			for (size_t i = 1; i < tabelCount; i++)
@@ -1159,8 +1175,49 @@ namespace ECS
 			}
 		}
 
+		void InitQueryItems(QueryImpl* impl, const QueryCreateDesc& desc)
+		{
+			I32 itemCount = 0;
+			for (int i = 0; i < MAX_QUERY_ITEM_COUNT; i++)
+			{
+				if (desc.items[i].compID != INVALID_ENTITY)
+					itemCount++;
+			}
+			impl->itemCount = itemCount;
+
+			if (itemCount > 0)
+			{
+				// Get query item ptr
+				QueryItem* itemPtr = nullptr;
+				if (itemCount < QUERY_ITEM_SMALL_CACHE_SIZE)
+				{
+					itemPtr = impl->queryItemSmallCache;
+				}
+				else
+				{
+					impl->queryItemsCache.resize(itemCount);
+					itemPtr = impl->queryItemsCache.data();
+				}
+
+				for (int i = 0; i < itemCount; i++)
+					itemPtr[i] = desc.items[i];
+
+				impl->queryItems = itemPtr;
+
+				// Finalize query items
+				for (int i = 0; i < itemCount; i++)
+				{
+					QueryItem& item = itemPtr[i];
+
+					// Set
+					if (item.set.flags & QueryItemFlagParent)
+						item.set.relation = EcsRelationChildOf;
+				}
+			}
+		}
+
 		// Create a new query
-		QueryImpl* InitNewQuery(const QueryCreateDesc& desc)
+		QueryImpl* CreateNewQuery(const QueryCreateDesc& desc)
 		{
 			FlushPendingTables();
 
@@ -1168,36 +1225,10 @@ namespace ECS
 			ECS_ASSERT(ret != nullptr);
 			ret->queryID = queryPool.GetLastID();
 
-			// Create query items
-			I32 itemCount = 0;
-			for (int i = 0; i < MAX_QUERY_ITEM_COUNT; i++)
-			{
-				if (desc.items[i].compID != INVALID_ENTITY)
-					itemCount++;
-			}
+			// Init query items
+			InitQueryItems(ret, desc);
 
-			ret->itemCount = itemCount;
-
-			if (itemCount > 0)
-			{
-				QueryItem* itemPtr = nullptr;
-				if (itemCount < QUERY_ITEM_SMALL_CACHE_SIZE)
-				{
-					itemPtr = ret->queryItemSmallCache;
-				}
-				else
-				{
-					ret->queryItemsCache.resize(itemCount);
-					itemPtr = ret->queryItemsCache.data();
-				}
-
-				for (int i = 0; i < itemCount; i++)
-					itemPtr[i] = desc.items[i];
-
-				ret->queryItems = itemPtr;
-			}
-
-			// Parse query flags
+			// Process query flags
 			ProcessQueryFlags(ret);
 
 			// Set group context
@@ -1206,11 +1237,10 @@ namespace ECS
 				ret->groupByID = ret->queryItems[ret->sortByItemIndex - 1].compID;
 				ret->groupByItem = &ret->queryItems[ret->sortByItemIndex - 1];
 			}
-		
-			// Create query 
+
 			if (desc.cached)
 			{
-				// Match exsiting tables and add into cache
+				// Match exsiting tables and add into cache if query cached
 				QueryMatchTables(ret);
 			}
 			ret->cached = desc.cached;
@@ -1220,7 +1250,7 @@ namespace ECS
 
 		void QueryFreeTableCache(QueryImpl*query, QueryTableCache* queryTable)
 		{
-			Util::ListNode<QueryTableMatch>* cur, * next;
+			Util::ListNode<QueryTableMatch>* cur, *next;
 			for (cur = queryTable->data.first; cur != nullptr; cur = next)
 			{
 				QueryTableMatch* match = cur->Cast();
@@ -1228,7 +1258,7 @@ namespace ECS
 				ECS_FREE(match->columns);
 				ECS_FREE(match->sizes);
 
-				// Remove Non-emtpy table
+				// Remove non-emtpy table
 				if (!queryTable->empty)
 					QueryRemoveTableMatchNode(query, match);
 
@@ -1274,7 +1304,7 @@ namespace ECS
 		{
 			QueryIteratorImpl& impl = *iter.impl;
 			impl.query = query;
-			impl.matchIter.curTableMatch = query->nonEmtpyTableList.first;
+			impl.matchIter.curTableMatch = query->realTableList.first;
 			impl.matchIter.matchCount = query->matchingCount;
 		}
 
@@ -1336,6 +1366,8 @@ namespace ECS
 				GetQueryIteratorFromCache(query, iter);
 			else
 				GetQueryIteratorByFilter(query, iter);
+
+			// Sort tables
 
 			return ECS_MOV(iter);
 		}
@@ -2223,14 +2255,8 @@ namespace ECS
 			return info->table;
 		}
 
-		I32 TableSearchRelation(EntityTable* table, EntityID id, EntityID relation)
-		{
-			if (table == nullptr)
-				return -1;
-
-			return -1;
-		}
-
+		// Search target component id from a table
+		// Return column of component if compID exists, otherwise return -1
 		I32 TableSearchType(EntityTable* table, EntityID compID)
 		{
 			if (table == nullptr)
@@ -2241,6 +2267,118 @@ namespace ECS
 				return -1;
 
 			return record->data.column;
+		}
+
+		I32 TableSearchType(EntityTable* table, ComponentRecord* compRecord)
+		{
+			if (table == nullptr || compRecord == nullptr)
+				return -1;
+
+			TableComponentRecord* record = GetTableRecordFromCache(&compRecord->cache, table);
+			if (record == nullptr)
+				return -1;
+
+			return record->data.column;
+		}
+
+		I32 TypeSearchRelation(EntityTable* table, EntityID compID, EntityID relation, ComponentRecord* compRecord, I32 minDepth, I32 maxDepth, EntityID* objOut, I32* depthOut)
+		{
+			if (minDepth <= 0)
+			{
+				I32 ret = TableSearchType(table, compRecord);
+				if (ret != -1)
+					return ret;
+			}
+
+			// Check table flags
+			if (!(table->flags & TableFlagHasRelation) || relation == INVALID_ENTITY)
+				return -1;
+
+			// Relation must is a pair (relation, None)
+			ComponentRecord* relationRecord = GetComponentRecord(relation);
+			if (relationRecord == nullptr)
+				return -1;
+
+			I32 column = TableSearchType(table, relationRecord);
+			if (column != -1)
+			{
+				EntityID obj = ECS_GET_PAIR_SECOND(table->type[column]);
+				assert(obj != INVALID_ENTITY);
+				EntityInfo* objInfo = entityPool.Get(obj);
+				assert(objInfo != nullptr);
+
+				I32 objColumn = TypeSearchRelation(objInfo->table, compID, relation, compRecord, minDepth - 1, maxDepth - 1, objOut, depthOut);
+				if (objColumn != -1)
+				{
+					if (objOut != nullptr)
+						*objOut = GetAliveEntity(obj);
+					if (depthOut != nullptr)
+						(*depthOut)++;
+
+					return objColumn;
+				}
+				
+				// Obj dont have same component
+				// TODO
+			}
+
+			return -1;
+		}
+
+		// Search target component id with relation from a table
+		I32 TableSearchRelation(EntityTable* table, EntityID compID, EntityID relation, I32 minDepth, I32 maxDepth, EntityID* objOut, I32* depthOut)
+		{
+			if (table == nullptr)
+				return -1;
+
+			ComponentRecord* record = GetComponentRecord(compID);
+			if (record == nullptr)
+				return -1;
+
+			maxDepth = (maxDepth == 0) ? INT32_MAX : maxDepth;
+
+			return TypeSearchRelation(
+				table, compID, ECS_MAKE_PAIR(relation, EcsPropertyNone), 
+				record, minDepth, maxDepth, objOut, depthOut);
+		}
+
+		// Search target component with relation from a table
+		I32 TableSearchRelationLast(EntityTable* table, EntityID compID, EntityID relation, I32 minDepth, I32 maxDepth, I32* depthOut)
+		{
+			if (table == nullptr)
+				return -1;
+
+			// Find the column of target compID
+			I32 depth = 0;
+			EntityID obj = INVALID_ENTITY;
+			I32 column = TableSearchRelation(table, compID, relation, 0, 0, &obj, &depth);
+			if (column == -1)
+				return -1;
+
+			// Get obj of relation
+			if (obj == INVALID_ENTITY)
+			{
+				if (TableSearchRelation(table, compID, relation, 1, 0, &obj, &depth) == -1)
+					return column;
+			}
+
+			while (true)
+			{
+				EntityTable* curTable = GetTable(obj);
+				ECS_ASSERT(curTable != nullptr);
+				I32 curDepth = 0;
+				EntityID curObj = INVALID_ENTITY;
+				if (TableSearchRelation(curTable, compID, relation, 1, 0, &curObj, &curDepth) == -1)
+					break;
+
+				depth += curDepth;
+				obj = curObj;
+			}
+
+			if (depthOut != nullptr)
+				*depthOut = depth;
+
+			return column;
 		}
 
 		EntityTable* FindOrCreateTableWithIDs(const Vector<EntityID>& compIDs)
@@ -3402,6 +3540,9 @@ namespace ECS
 			if (ECS_HAS_ROLE(compID, EcsRolePair))
 			{
 				U32 relation = ECS_GET_PAIR_FIRST(compID);
+				if (relation != INVALID_ENTITY)
+					flags |= TableFlagHasRelation;
+
 				if (relation == EcsRelationIsA)
 					flags |= TableFlagHasIsA;
 				else if (relation == EcsRelationChildOf)
