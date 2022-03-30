@@ -322,7 +322,7 @@ namespace ECS
 		bool cached = false;
 
 		EntityTableCache<QueryTableCache> matchedTableCache; // All matched tables <QueryTableCache>
-		QueryTableMatchList realTableList; // Non-empty tables
+		QueryTableMatchList orderedTableList; // Non-empty ordered tables
 
 		// Group
 		EntityID groupByID = INVALID_ENTITY;
@@ -905,43 +905,41 @@ namespace ECS
 			return tableMatch;
 		}
 
-		QueryTableMatch* FindGroupInsertionNode(QueryImpl* query, U64 groupID)
+		// Find the insertion node of the group which has the closest groupID
+		QueryTableMatch* QueryFindGroupInsertionNode(QueryImpl* query, U64 groupID)
 		{
-			assert(query->groupByID != INVALID_ENTITY);
+			ECS_ASSERT(query->groupByID != INVALID_ENTITY);
 			
-			QueryTableMatchList* targetList = nullptr;
-			U64 targetGroupID = 0;
-
-			// Find closest group id
+			QueryTableMatchList* closedList = nullptr;
+			U64 closedGroupID = 0;
 			for (auto& kvp : query->groups)
 			{
-				if (kvp.first >= groupID)
+				U64 curGroupID = kvp.first;
+				if (curGroupID >= groupID)
 					continue;
 
 				QueryTableMatchList& list = kvp.second;
 				if (list.last == nullptr)
 					continue;
 
-				if (targetList == nullptr || (groupID - kvp.first) < (groupID - targetGroupID))
+				if (closedList == nullptr || (groupID - curGroupID) < (groupID - closedGroupID))
 				{
-					targetList = &list;
-					targetGroupID = kvp.first;
+					closedList = &list;
+					closedGroupID = curGroupID;
 				}
 			}
-
-			if (targetList != nullptr)
-				return targetList->last->Cast();
-
-			return  nullptr;
+			return closedList != nullptr ? closedList->last->Cast() : nullptr;
 		}
 
+		// Create group for the matched table node and inster into the query list
 		void QueryCreateGroup(QueryImpl* query, QueryTableMatch* node)
 		{
-			QueryTableMatch* target = FindGroupInsertionNode(query, node->groupID);
-			if (target == nullptr)
+			// Find the insertion point for current group
+			QueryTableMatch* insertPoint = QueryFindGroupInsertionNode(query, node->groupID);
+			if (insertPoint == nullptr)
 			{
-				// Insert into non-empty matching list
-				QueryTableMatchList& list = query->realTableList;
+				// No insertion point, just insert into the orderdTableList
+				QueryTableMatchList& list = query->orderedTableList;
 				if (list.first)
 				{
 					node->next = list.first;
@@ -954,14 +952,17 @@ namespace ECS
 					list.last = node;
 				}
 			}
-		}
-
-		QueryTableMatchList& QueryEnsureTableList(QueryImpl* query, QueryTableMatch* node)
-		{
-			if (query->groupByID != INVALID_ENTITY)
-				return query->groups[node->groupID];
 			else
-				return query->realTableList;
+			{
+				Util::ListNode<QueryTableMatch>* next = insertPoint->next;
+				node->prev = insertPoint;
+				insertPoint->next = node;
+				node->next = next;
+				if (next)
+					next->prev = node;
+				else 
+					query->orderedTableList.last = node;
+			}
 		}
 
 		// Compute group id by cascade
@@ -990,47 +991,55 @@ namespace ECS
 
 		void QueryInsertTableMatchNode(QueryImpl* query, QueryTableMatch* node)
 		{
-			// Compute group id
-			if (query->queryID != INVALID_ENTITY)
+			// Insert table matched node into list
+			ECS_ASSERT(node->prev == nullptr && node->next == nullptr);
+
+			bool groupByID = query->groupByID != INVALID_ENTITY;
+			if (groupByID)
 				node->groupID = ComputeGroupID(query, node);
 			else
 				node->groupID = 0;
 
-			// Insert query matching table in cache list
-			// If table need to group, need to manage a group list 
-			ECS_ASSERT(node->prev == nullptr && node->next == nullptr);
-			QueryTableMatchList& list = QueryEnsureTableList(query, node);
-			if (list.last)
+			QueryTableMatchList* list = nullptr;
+			if (groupByID)
+				list = &query->groups[node->groupID];
+			else
+				list = &query->orderedTableList;
+
+			if (list->last)
 			{
-				Util::ListNode<QueryTableMatch>* last = list.last;
+				Util::ListNode<QueryTableMatch>* last = list->last;
 				Util::ListNode<QueryTableMatch>* lastNext = last->next;
 				node->prev = last;
 				node->next = lastNext;
 				last->next = node;
-
 				if (lastNext != nullptr)
 					lastNext->prev = node;
-
-				list.last = node;
-
-				// Update real table list
-				if (query->groupByID != INVALID_ENTITY)
+				list->last = node;
+				
+				if (groupByID)
 				{
-					if (query->realTableList.last == last)
-						query->realTableList.last = node;
+					if (query->orderedTableList.last == last)
+						query->orderedTableList.last = node;
 				}
 			}
 			else
 			{
-				list.first = node;
-				list.last = node;
+				list->first = node;
+				list->last = node;
 
-				// Create table list for target group id
-				if (query->groupByID != INVALID_ENTITY)
+				if (groupByID)
+				{
+					// If the table needs to be grouped, manage the group list, 
+					// and the nodes of group list are sorted according to the GroupID
 					QueryCreateGroup(query, node);
+				}
 			}
 
-			list.count++;
+			if (groupByID)
+				query->orderedTableList.count++;
+
+			list->count++;
 			query->matchingCount++;
 		}
 
@@ -1043,7 +1052,7 @@ namespace ECS
 			if (next)
 				next->prev = prev;
 
-			QueryTableMatchList& list = query->realTableList;
+			QueryTableMatchList& list = query->orderedTableList;
 			ECS_ASSERT(list.count > 0);
 			list.count--;
 
@@ -1169,7 +1178,7 @@ namespace ECS
 				QueryItem& queryItem = query->queryItems[i];
 				if (queryItem.set.flags & QueryItemFlagCascade)
 				{
-					assert(query->sortByItemIndex == 0);
+					ECS_ASSERT(query->sortByItemIndex == 0);
 					query->sortByItemIndex = i + 1;
 				}
 			}
@@ -1180,7 +1189,7 @@ namespace ECS
 			I32 itemCount = 0;
 			for (int i = 0; i < MAX_QUERY_ITEM_COUNT; i++)
 			{
-				if (desc.items[i].compID != INVALID_ENTITY)
+				if (desc.items[i].pred != INVALID_ENTITY)
 					itemCount++;
 			}
 			impl->itemCount = itemCount;
@@ -1208,8 +1217,35 @@ namespace ECS
 				for (int i = 0; i < itemCount; i++)
 				{
 					QueryItem& item = itemPtr[i];
+					
+					// Query item compID
+					EntityID pred = item.pred;
+					EntityID obj = item.obj;
+					if (ECS_HAS_ROLE(pred, EcsRolePair))
+					{
+						ECS_ASSERT(item.obj != INVALID_ENTITY);
+						pred = ECS_GET_PAIR_FIRST(item.pred);
+						obj = ECS_GET_PAIR_SECOND(item.obj);
+					
+						item.pred = pred;
+						item.obj = obj;
+					}
 
-					// Set
+					ECS_ASSERT(item.pred != INVALID_ENTITY);
+					ECS_ASSERT(item.role == 0);	// Other roles are not supported
+
+					if (obj != INVALID_ENTITY)
+					{
+						item.compID = (EcsRolePair | ECS_ENTITY_COMBO(obj, pred));
+						item.role = EcsRolePair;
+					}
+					else
+					{
+						item.compID = pred;
+						item.role = 0;
+					}
+					
+					// Query item flags
 					if (item.set.flags & QueryItemFlagParent)
 						item.set.relation = EcsRelationChildOf;
 				}
@@ -1304,7 +1340,7 @@ namespace ECS
 		{
 			QueryIteratorImpl& impl = *iter.impl;
 			impl.query = query;
-			impl.matchIter.curTableMatch = query->realTableList.first;
+			impl.matchIter.curTableMatch = query->orderedTableList.first;
 			impl.matchIter.matchCount = query->matchingCount;
 		}
 
@@ -1713,7 +1749,7 @@ namespace ECS
 				if (obj != INVALID_ENTITY)
 				{
 					obj = GetAliveEntity(obj);
-					assert(obj != INVALID_ENTITY);
+					ECS_ASSERT(obj != INVALID_ENTITY);
 				}
 			}
 			return ret;
@@ -2303,9 +2339,9 @@ namespace ECS
 			if (column != -1)
 			{
 				EntityID obj = ECS_GET_PAIR_SECOND(table->type[column]);
-				assert(obj != INVALID_ENTITY);
+				ECS_ASSERT(obj != INVALID_ENTITY);
 				EntityInfo* objInfo = entityPool.Get(obj);
-				assert(objInfo != nullptr);
+				ECS_ASSERT(objInfo != nullptr);
 
 				I32 objColumn = TypeSearchRelation(objInfo->table, compID, relation, compRecord, minDepth - 1, maxDepth - 1, objOut, depthOut);
 				if (objColumn != -1)

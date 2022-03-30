@@ -23,10 +23,10 @@ namespace ECS
 	static const size_t MAX_QUERY_ITEM_COUNT = 16;
 	extern const size_t ENTITY_PAIR_FLAG;
 
-#define ECS_ENTITY_HI(e) (static_cast<U32>((e) >> 32))
-#define ECS_ENTITY_LOW(e) (static_cast<U32>(e))
-#define ECS_ENTITY_COMBO(lo, hi) ((static_cast<U64>(hi) << 32) + static_cast<U32>(lo))
-#define ECS_MAKE_PAIR(re, obj) (ENTITY_PAIR_FLAG | ECS_ENTITY_COMBO(obj, re))
+	#define ECS_ENTITY_HI(e) (static_cast<U32>((e) >> 32))
+	#define ECS_ENTITY_LOW(e) (static_cast<U32>(e))
+	#define ECS_ENTITY_COMBO(lo, hi) ((static_cast<U64>(hi) << 32) + static_cast<U32>(lo))
+	#define ECS_MAKE_PAIR(re, obj) (ENTITY_PAIR_FLAG | ECS_ENTITY_COMBO(obj, re))
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Components
@@ -128,17 +128,18 @@ namespace ECS
 		QueryItemFlagCascade = 1 << 1
 	};
 
-	struct QueryItemSet
-	{
-		U32 flags;
-		U64 relation;
-	};
-
 	struct QueryItem
 	{
-		EntityID compID;
+		EntityID pred;
 		EntityID obj;
-		QueryItemSet set;
+		EntityID compID;
+		U64 role;
+
+		struct QueryItemSet
+		{
+			U32 flags;
+			U64 relation;
+		} set;
 	};
 
 	struct QueryIteratorImpl;
@@ -173,7 +174,7 @@ namespace ECS
 	struct QueryCreateDesc
 	{
 		QueryItem items[MAX_QUERY_ITEM_COUNT];
-		bool cached = false; // is heavy
+		bool cached = false; // TODO
 	};
 
 	using InvokerDeleter = void(*)(void* ptr);
@@ -484,17 +485,14 @@ namespace ECS
 		public:
 			using CompArray = typename CompTuple<Comps ...>::Array;
 
-			explicit EachInvoker(Func&& func_) noexcept :
-				func(ECS_MOV(func_)) {}
-
-			explicit EachInvoker(const Func& func_) noexcept :
-				func(func_) {}
+			explicit EachInvoker(Func&& func_) noexcept : func(ECS_MOV(func_)) {}
+			explicit EachInvoker(const Func& func_) noexcept : func(func_) {}
 
 			// SystemCreateDesc.invoker => EachInvoker
 			static void Run(QueryIterator* iter)
 			{
 				EachInvoker* invoker = static_cast<EachInvoker*>(iter->invoker);
-				assert(invoker != nullptr);
+				ECS_ASSERT(invoker != nullptr);
 				invoker->Invoke(iter);
 			}
 
@@ -509,19 +507,19 @@ namespace ECS
 		private:
 
 			template<typename... Args, enable_if_t<sizeof...(Comps) == sizeof...(Args), int> = 0>
-			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray&, Args... comps)
+			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray&, Args... args)
 			{
 				for (I32 row = 0; row < iter->entityCount; row++)
 				{
 					EntityID entity = iter->entities[row];
-					func(entity, (EachColumn<std::remove_reference_t<Comps>>(comps, row).Get())...);
+					func(entity, (EachColumn<std::remove_reference_t<Comps>>(args, row).Get())...);
 				}
 			}
 
 			template<typename... Args, enable_if_t<sizeof...(Comps) != sizeof...(Args), int> = 0>
-			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray& compArr, Args... comps)
+			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray& compArr, Args... args)
 			{
-				InvokeImpl(iter, func, index + 1, compArr, comps..., compArr[index]);
+				InvokeImpl(iter, func, index + 1, compArr, args..., compArr[index]);
 			}
 			
 			Func func;
@@ -542,7 +540,7 @@ namespace ECS
 			for (int i = 0; i < compIDs.size(); i++)
 			{
 				QueryItem& item = desc.items[i];
-				item.compID = compIDs[i];
+				item.pred = compIDs[i];
 			}
 		}
 		Query() = delete;
@@ -585,14 +583,14 @@ namespace ECS
 		template<typename C>
 		Query& Obj()
 		{
-			assert(currentItem != nullptr);
+			ECS_ASSERT(currentItem != nullptr);
 			currentItem->obj = ComponentType<C>::ID(*world);
 			return *this;
 		}
 
 		Query& Set(U32 flags)
 		{
-			assert(currentItem != nullptr);
+			ECS_ASSERT(currentItem != nullptr);
 			currentItem->set.flags = flags;
 			return *this;
 		}
@@ -636,7 +634,7 @@ namespace ECS
 			for (int i = 0; i < compIDs.size(); i++)
 			{
 				QueryItem& item = queryDesc.items[i];
-				item.compID = compIDs[i];
+				item.pred = compIDs[i];
 			}
 		}
 		SystemBuilder() = delete;
@@ -692,7 +690,7 @@ namespace ECS
 
 		inline void IllegalCtor(World* world, EntityID* entities, size_t size, size_t count, void* ptr)
 		{
-			assert(0);
+			ECS_ASSERT(0);
 		}
 
 		template<typename T, enable_if_t<std::is_trivially_constructible_v<T>, int> = 0>
@@ -751,7 +749,7 @@ namespace ECS
 
 		inline void IllegalCopy(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr)
 		{
-			assert(0);
+			ECS_ASSERT(0);
 		}
 
 		template<typename T, enable_if_t<std::is_trivially_copyable_v<T>, int> = 0>
@@ -818,7 +816,7 @@ namespace ECS
 
 		inline void IllegalMove(World* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr)
 		{
-			assert(0);
+			ECS_ASSERT(0);
 		}
 
 		template<typename T, enable_if_t<std::is_trivially_move_assignable_v<T>, int> = 0>
