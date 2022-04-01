@@ -85,6 +85,7 @@ TEST_CASE("System", "ECS")
             .With<VelocityComponent>();
     }
 
+    // ForEach
     ECS::EntityID system = world->CreateSystem<PositionComponent, VelocityComponent>()
         .ForEach([&updateTimes](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel)
         {
@@ -93,6 +94,19 @@ TEST_CASE("System", "ECS")
     );
     world->RunSystem(system);
     CHECK(updateTimes == 500);
+
+    // Iter
+    ECS::EntityID system1 = world->CreateSystem<PositionComponent, VelocityComponent>()
+        .Iter([&updateTimes](ECS::EntityIterator iter, PositionComponent* pos, VelocityComponent* vel)
+        {
+            for(int i = 0; i < iter.Count(); i++)
+                updateTimes++;
+        }
+    );
+    world->RunSystem(system1);
+    CHECK(updateTimes == 1000);
+
+
 }
 
 TEST_CASE("SingletonComponent", "ECS")

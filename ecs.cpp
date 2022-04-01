@@ -4,7 +4,8 @@
 // 1. hierarchy (Complete)
 // 1.1 ChildOf (Complete)
 // 1.2 (Child-Parent (Complete)
-// 
+// 2. Entity iterator (Complete)
+
 // 2. Query refactor
 // 3. Table merage
 // 4. Shared component (GetBaseComponent)

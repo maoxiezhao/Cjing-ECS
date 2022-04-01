@@ -428,7 +428,71 @@ namespace ECS
 		{
 			return componentID != INVALID_ENTITY && world.IsEntityAlive(componentID);
 		}
+
+		struct IndexIterator
+		{
+			explicit IndexIterator(size_t i) : index(i) {}
+
+			bool operator!=(IndexIterator const& other) const
+			{
+				return index != other.index;
+			}
+
+			size_t const& operator*() const
+			{
+				return index;
+			}
+
+			IndexIterator& operator++()
+			{
+				++index;
+				return *this;
+			}
+
+		private:
+			size_t index;
+		};
 	}
+
+	struct EntityIterator
+	{
+		using Iterator = _::IndexIterator;
+
+		EntityIterator(EntityID* entities_, size_t count_) :
+			entities(entities_),
+			count(count_)
+		{}
+
+		bool Empty()const
+		{
+			return count <= 0 || entities == nullptr;
+		}
+
+		size_t Count()const
+		{
+			return count;
+		}
+
+		EntityID At(size_t index)
+		{
+			ECS_ASSERT(index >= 0 || index < count);
+			return entities[index];
+		}
+
+		Iterator begin()
+		{
+			return Iterator(0);
+		}
+
+		Iterator end()
+		{
+			return Iterator(count);
+		}
+
+	private:
+		EntityID* entities = nullptr;
+		size_t count = 0;
+	};
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Invoker
@@ -456,6 +520,28 @@ namespace ECS
 			T& Get()
 			{
 				return *(static_cast<T*>(ptr) + row);
+			}
+		};
+
+		template<typename T, typename = int>
+		struct IterColumn {};
+
+		struct IterColumnBase
+		{
+			IterColumnBase(void* ptr_) : ptr(ptr_) {}
+
+		protected:
+			void* ptr;
+		};
+
+		template<typename T>
+		struct IterColumn<T, enable_if_t<!std::is_pointer_v<T>, int>> : IterColumnBase
+		{
+			IterColumn(void* ptr) : IterColumnBase(ptr) {};
+
+			T* Get()
+			{
+				return (static_cast<T*>(ptr));
 			}
 		};
 
@@ -526,6 +612,50 @@ namespace ECS
 			
 			Func func;
 		};
+
+
+		template<typename Func, typename... Comps>
+		struct IterInvoker
+		{
+		public:
+			using CompArray = typename CompTuple<Comps ...>::Array;
+
+			explicit IterInvoker(Func&& func_) noexcept : func(ECS_MOV(func_)) {}
+			explicit IterInvoker(const Func& func_) noexcept : func(func_) {}
+
+			// SystemCreateDesc.invoker => IterInvoker
+			static void Run(QueryIterator* iter)
+			{
+				IterInvoker* invoker = static_cast<IterInvoker*>(iter->invoker);
+				ECS_ASSERT(invoker != nullptr);
+				invoker->Invoke(iter);
+			}
+
+			// Get entity and components for func
+			void Invoke(QueryIterator* iter)
+			{
+				CompTuple<Comps...> compTuple;
+				compTuple.Populate(iter);
+				InvokeImpl(iter, func, 0, compTuple.compsArray);
+			}
+
+		private:
+
+			template<typename... Args, enable_if_t<sizeof...(Comps) == sizeof...(Args), int> = 0>
+			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray&, Args... args)
+			{
+				EntityIterator entityIter(iter->entities, iter->entityCount);
+				func(entityIter, (IterColumn<std::remove_reference_t<Comps>>(args).Get())...);
+			}
+
+			template<typename... Args, enable_if_t<sizeof...(Comps) != sizeof...(Args), int> = 0>
+			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray& compArr, Args... args)
+			{
+				InvokeImpl(iter, func, index + 1, compArr, args..., compArr[index]);
+			}
+
+			Func func;
+		};
 	}
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -545,6 +675,12 @@ namespace ECS
 		void ForEach(Func&& func)
 		{
 			this->Iterate<_::EachInvoker>(ECS_FWD(func));
+		}
+
+		template<typename Func>
+		void Iter(Func&& func)
+		{
+			this->Iterate<_::IterInvoker>(ECS_FWD(func));
 		}
 
 	protected:
@@ -683,6 +819,13 @@ namespace ECS
 		EntityID ForEach(Func&& func)
 		{
 			using Invoker = typename _::EachInvoker<decay_t<Func>, Comps...>;
+			return Build<Invoker>(ECS_FWD(func));
+		}
+
+		template<typename Func>
+		EntityID Iter(Func&& func)
+		{
+			using Invoker = typename _::IterInvoker<decay_t<Func>, Comps...>;
 			return Build<Invoker>(ECS_FWD(func));
 		}
 
