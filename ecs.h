@@ -176,7 +176,7 @@ namespace ECS
 	struct QueryCreateDesc
 	{
 		QueryItem items[MAX_QUERY_ITEM_COUNT];
-		bool cached = false; // TODO
+		bool cached = true; // TODO
 	};
 
 	using InvokerDeleter = void(*)(void* ptr);
@@ -708,9 +708,9 @@ namespace ECS
 			}
 		}
 
-		Base& Cached()
+		Base& NoCached()
 		{
-			queryDesc.cached = true;
+			queryDesc.cached = false;
 			return *this;
 		}
 

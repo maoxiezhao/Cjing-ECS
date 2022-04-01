@@ -164,7 +164,7 @@ TEST_CASE("Query", "ECS")
             .With<VelocityComponent>();
     }
 
-    auto query = world->CreateQuery<PositionComponent, VelocityComponent>().Cached().Build();
+    auto query = world->CreateQuery<PositionComponent, VelocityComponent>().Build();
     query.ForEach([&](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
         aTimes++;
     });
@@ -226,7 +226,6 @@ TEST_CASE("ChildOf", "ECS")
 
     // Query
     auto query = world->CreateQuery<Position, Position, Position>()
-        .Cached()
         .Item(0).Obj<Local>()
         .Item(1).Obj<Global>()
         .Item(2).Obj<Global>()
