@@ -1,9 +1,9 @@
 ﻿#include "ecs.h"
 
 // TODO
-// 1. hierarchy
+// 1. hierarchy (Complete)
 // 1.1 ChildOf (Complete)
-// 1.2 (Child-Parent update)
+// 1.2 (Child-Parent (Complete)
 // 
 // 2. Query refactor
 // 3. Table merage
@@ -57,7 +57,7 @@ namespace ECS
 	const U32 FirstUserEntityID = HiComponentID + 128; // [256 - 384] builtin tags
 
 	EntityID BuiltinComponentID = HiComponentID;
-#define BUILTIN_COMPONENT_ID (BuiltinComponentID++)
+	#define BUILTIN_COMPONENT_ID (BuiltinComponentID++)
 
 	// properties
 	const EntityID EcsPropertyTag = BUILTIN_COMPONENT_ID;
@@ -91,7 +91,6 @@ namespace ECS
 
 	inline EntityID StripGeneration(EntityID id)
 	{
-		// id is a pair, don't need to erase the generation bits
 		if (id & ECS_ROLE_MASK)
 			return id;
 
@@ -223,7 +222,6 @@ namespace ECS
 
 	using ComponentColumnData = Util::StorageVector;
 
-	// Archetype table for entity, archtype is a set of componentIDs
 	struct EntityTable
 	{
 	public:
@@ -303,12 +301,7 @@ namespace ECS
 	};
 	using QueryTableCache = EntityTableCacheItemInst<QueryTableCacheData>;
 
-	enum QueryFlag
-	{
-		QueryFlagOptional = 1 << 0,
-	};
-
-	// TODO: too heavy
+	// TODO: be refactored
 	struct QueryImpl
 	{
 		U64 queryID;
@@ -317,7 +310,6 @@ namespace ECS
 		QueryItem queryItemSmallCache[QUERY_ITEM_SMALL_CACHE_SIZE];
 		I32 itemCount;
 		I32 sortByItemIndex = 0;
-		U32 flags = 0;
 		I32 matchingCount = 0;
 		bool cached = false;
 

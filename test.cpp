@@ -150,7 +150,7 @@ TEST_CASE("Query", "ECS")
             .With<VelocityComponent>();
     }
 
-    auto& query = world->CreateQuery<PositionComponent, VelocityComponent>().Cached().Build();
+    auto query = world->CreateQuery<PositionComponent, VelocityComponent>().Cached().Build();
     query.ForEach([&](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
         aTimes++;
     });
@@ -210,7 +210,8 @@ TEST_CASE("ChildOf", "ECS")
         .With<Position, Global>({ 44.0f, 44.0f })
         .With<Health>();
 
-    auto& query = world->CreateQuery<Position, Position, Position>()
+    // Query
+    auto query = world->CreateQuery<Position, Position, Position>()
         .Cached()
         .Item(0).Obj<Local>()
         .Item(1).Obj<Global>()
@@ -222,6 +223,24 @@ TEST_CASE("ChildOf", "ECS")
         queue.push_back(entity);
     });
 
+    CHECK(queue[0] == e1.entity);
+    CHECK(queue[1] == e2.entity);
+    CHECK(queue[2] == e4.entity);
+    CHECK(queue[3] == e3.entity);
+
+    queue.clear();
+
+    // System
+    auto system = world->CreateSystem<Position, Position, Position>()
+        .Item(0).Obj<Local>()
+        .Item(1).Obj<Global>()
+        .Item(2).Obj<Global>()
+        .Item(2)
+        .Set(ECS::QueryItemFlagParent | ECS::QueryItemFlagCascade)
+        .ForEach([&](ECS::EntityID entity, Position& p1, Position& p2, Position& pOut) {
+            queue.push_back(entity);
+        });
+    world->RunSystem(system);
     CHECK(queue[0] == e1.entity);
     CHECK(queue[1] == e2.entity);
     CHECK(queue[2] == e4.entity);

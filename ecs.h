@@ -12,6 +12,8 @@ namespace ECS
 	class SystemBuilder;
 	template<typename... Comps>
 	class Query;
+	template<typename... Comps>
+	struct QueryBuilder;
 
 	using EntityID = U64;
 	using EntityIDs = Vector<EntityID>;
@@ -308,7 +310,7 @@ namespace ECS
 		///////////////////////////////////////////////////////////////////////////
 		// Query
 		template<typename... Comps>
-		Query<Comps...> CreateQuery();
+		QueryBuilder<Comps...> CreateQuery();
 		virtual QueryID CreateQuery(const QueryCreateDesc& desc) = 0;
 		virtual void DestroyQuery(QueryID queryID) = 0;
 		virtual QueryIterator GetQueryIterator(QueryID queryID) = 0;
@@ -529,29 +531,106 @@ namespace ECS
 	////////////////////////////////////////////////////////////////////////////////
 	//// Query
 	////////////////////////////////////////////////////////////////////////////////
+
 	template<typename... Comps>
-	class Query
+	struct QueryIteratorBase
+	{
+		QueryIteratorBase() {};
+		virtual ~QueryIteratorBase() {}
+
+		virtual QueryIterator GetQueryIterator() = 0;
+		virtual bool NextQueryIterator(QueryIterator& iter) = 0;
+
+		template<typename Func>
+		void ForEach(Func&& func)
+		{
+			this->Iterate<_::EachInvoker>(ECS_FWD(func));
+		}
+
+	protected:
+		template<template<typename Func, typename ... Args> class Invoker, typename Func>
+		void Iterate(Func&& func)
+		{
+			QueryIterator iter = this->GetQueryIterator();
+			while (this->NextQueryIterator(iter))
+				Invoker<decay_t<Func>, Comps...>(ECS_FWD(func)).Invoke(&iter);
+		}
+	};
+
+	template<typename Base, typename... Comps>
+	struct QueryBuilderBase
 	{
 	public:
-		Query(World* world_) :
+		QueryBuilderBase(World* world_) :
 			world(world_),
 			compIDs({ (ComponentType<Comps>::ID(*world_))... })
 		{
 			for (int i = 0; i < compIDs.size(); i++)
 			{
-				QueryItem& item = desc.items[i];
+				QueryItem& item = queryDesc.items[i];
 				item.pred = compIDs[i];
 			}
 		}
-		Query() = delete;
 
-		Query& Build()
+		Base& Cached()
 		{
-			if (queryID > 0)
-				Free();
-
-			queryID = world->CreateQuery(desc);
+			queryDesc.cached = true;
 			return *this;
+		}
+
+		Base& Item(I32 index)
+		{
+			currentItem = &queryDesc.items[index];
+			return *this;
+		}
+
+		template<typename C>
+		Base& Obj()
+		{
+			ECS_ASSERT(currentItem != nullptr);
+			currentItem->obj = ComponentType<C>::ID(*world);
+			return *this;
+		}
+
+		Base& Set(U32 flags)
+		{
+			ECS_ASSERT(currentItem != nullptr);
+			currentItem->set.flags = flags;
+			return *this;
+		}
+
+		operator Base& () {
+			return *static_cast<Base*>(this);
+		}
+
+		Query<Comps...> Build()
+		{
+			return Query<Comps...>(world, queryDesc);
+		}
+
+	protected:
+		World* world;
+		Array<U64, sizeof...(Comps)> compIDs;
+		QueryCreateDesc queryDesc = {};
+		QueryItem* currentItem = nullptr;
+	};
+
+	template<typename... Comps>
+	struct QueryBuilder : QueryBuilderBase<QueryBuilder<Comps...>, Comps...>
+	{
+		QueryBuilder(World* world_) : QueryBuilderBase<QueryBuilder<Comps...>, Comps...>(world_) {}
+	};
+
+	template<typename... Comps>
+	class Query final : public QueryIteratorBase<Comps...>
+	{
+	public:
+		Query(World* world_, const QueryCreateDesc& desc_) :
+			world(world_), 
+			queryDesc(desc_),
+			queryID(0) 
+		{
+			queryID = world_->CreateQuery(desc_);
 		}
 
 		bool Valid()const 
@@ -563,59 +642,31 @@ namespace ECS
 		{
 			if (queryID > 0)
 			{
-				world->DestroyQuery(queryID);
+				this->world->DestroyQuery(queryID);
 				queryID = 0;
 			}
 		}
 
-		Query& Cached()
+		QueryIterator GetQueryIterator()override
 		{
-			desc.cached = true;
-			return *this;
+			return std::move(this->world->GetQueryIterator(queryID));
 		}
 
-		Query& Item(I32 index)
+		bool NextQueryIterator(QueryIterator& iter)override
 		{
-			currentItem = &desc.items[index];
-			return *this;
-		}
-
-		template<typename C>
-		Query& Obj()
-		{
-			ECS_ASSERT(currentItem != nullptr);
-			currentItem->obj = ComponentType<C>::ID(*world);
-			return *this;
-		}
-
-		Query& Set(U32 flags)
-		{
-			ECS_ASSERT(currentItem != nullptr);
-			currentItem->set.flags = flags;
-			return *this;
-		}
-
-		template<typename Func>
-		void ForEach(Func&& func)
-		{
-			using Invoker = typename _::EachInvoker<decay_t<Func>, Comps...>;
-			QueryIterator iter = world->GetQueryIterator(queryID);
-			while (world->QueryIteratorNext(iter))
-				Invoker(ECS_FWD(func)).Invoke(&iter);
+			return this->world->QueryIteratorNext(iter);
 		}
 
 	private:
 		World* world;
-		Array<U64, sizeof...(Comps)> compIDs;
-		QueryID queryID = 0;
-		QueryCreateDesc desc = {};
-		QueryItem* currentItem = nullptr;
+		QueryCreateDesc queryDesc;
+		QueryID queryID;
 	};
 
 	template<typename... Comps>
-	inline Query<Comps...> World::CreateQuery()
+	inline QueryBuilder<Comps...> World::CreateQuery()
 	{
-		return Query<Comps...>(this);
+		return QueryBuilder<Comps...>(this);
 	}
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -623,22 +674,11 @@ namespace ECS
 	////////////////////////////////////////////////////////////////////////////////
 
 	template<typename... Comps>
-	class SystemBuilder
+	class SystemBuilder : public QueryBuilderBase<SystemBuilder<Comps...>, Comps...>
 	{
 	public:
-		SystemBuilder(World* world_) : 
-			world(world_),
-			compIDs({ (ComponentType<Comps>::ID(*world_))... })
-		{
-			auto& queryDesc = desc.query;
-			for (int i = 0; i < compIDs.size(); i++)
-			{
-				QueryItem& item = queryDesc.items[i];
-				item.pred = compIDs[i];
-			}
-		}
-		SystemBuilder() = delete;
-
+		SystemBuilder(World* world_) : QueryBuilderBase<SystemBuilder<Comps...>, Comps...>(world_) {}
+		
 		template<typename Func>
 		EntityID ForEach(Func&& func)
 		{
@@ -650,18 +690,17 @@ namespace ECS
 		template<typename Invoker, typename Func>
 		EntityID Build(Func&& func)
 		{
-			Invoker* invoker = ECS_NEW_OBJECT<Invoker>(ECS_FWD(func));
-			desc.action = Invoker::Run;
-			desc.invoker = invoker;
-			desc.invokerDeleter = reinterpret_cast<InvokerDeleter>(ECS_DELETE_OBJECT<Invoker>);
-			desc.query.cached = true;
-			return world->InitNewSystem(desc);
+			Invoker* invoker = ECS_NEW_OBJECT<Invoker>(ECS_FWD(func));	
+			sysDesc.action = Invoker::Run;
+			sysDesc.invoker = invoker;
+			sysDesc.invokerDeleter = reinterpret_cast<InvokerDeleter>(ECS_DELETE_OBJECT<Invoker>);
+			sysDesc.query = this->queryDesc;
+			sysDesc.query.cached = true;
+			return this->world->InitNewSystem(sysDesc);
 		}
 
 	private:
-		World* world;
-		SystemCreateDesc desc = {};
-		Array<U64, sizeof...(Comps)> compIDs;
+		SystemCreateDesc sysDesc = {};
 	};
 
 	template<typename... Args>
