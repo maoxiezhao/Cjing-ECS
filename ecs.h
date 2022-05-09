@@ -212,8 +212,7 @@ namespace ECS
 		virtual const EntityBuilder& CreatePrefab(const char* name) = 0;
 		virtual EntityID CreateEntityID(const char* name) = 0;
 		virtual EntityID FindEntityIDByName(const char* name) = 0;
-		virtual EntityID IsEntityAlive(EntityID entity)const = 0;
-		virtual EntityType GetEntityType(EntityID entity)const = 0;
+		virtual bool EntityExists(EntityID entity)const = 0;
 		virtual void DeleteEntity(EntityID entity) = 0;
 		virtual void SetEntityName(EntityID entity, const char* name) = 0;
 		virtual void EnsureEntity(EntityID entity) = 0;
@@ -426,7 +425,7 @@ namespace ECS
 		template<typename C>
 		bool ComponentTypeRegister<C>::Registered(World& world)
 		{
-			return componentID != INVALID_ENTITY && world.IsEntityAlive(componentID);
+			return componentID != INVALID_ENTITY && world.EntityExists(componentID);
 		}
 
 		struct IndexIterator

@@ -1,25 +1,31 @@
 ﻿#include "ecs.h"
 
 // TODO
-// 1. hierarchy (Complete)
-// 1.1 ChildOf (Complete)
-// 1.2 (Child-Parent (Complete)
-// 2. Entity iterator (Complete)
-
-// 2. Query refactor
-// 3. Table merage
-// 4. Shared component (GetBaseComponent)
-// 5. Work pipeline
-// 6. Mult threads
-// 7. Serialization
+// 1. Work pipeline
+// 2. Mult threads
+// 3. Query refactor
+// 4. Table merage
+// 5. Shared component (GetBaseComponent)
+// 6. Serialization
 
 namespace ECS
 {
 	struct WorldImpl;
 	struct EntityTable;
 
+
 	// -----------------------------------------
 	//            EntityID: 64                 |
+	//__________________________________________
+	// 	 32            |          32           |
+	// ----------------------------------------|
+	//   FFffFFff      |   FFFFffff            |
+	// ----------------------------------------|
+	//   generation    |    entity             |
+	// ----------------------------------------|
+	// 
+	// -----------------------------------------
+	//            ID: 64                       |
 	//__________________________________________
 	// 	 8     |     24          |    32       |
 	// ----------------------------------------|
@@ -115,13 +121,6 @@ namespace ECS
 	{
 		EntityTable* table = nullptr;
 		I32 row = 0;
-	};
-
-	struct InternalEntityInfo
-	{
-		EntityTable* table = nullptr;
-		I32 row = 0;
-		EntityInfo* entityInfo = nullptr;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -452,6 +451,8 @@ namespace ECS
 	struct WorldImpl : public World
 	{
 		EntityBuilder entityBuilder = EntityBuilder(this);
+
+		// ID infos
 		EntityID lastComponentID = 0;
 		EntityID lastID = 0;
 
@@ -462,15 +463,17 @@ namespace ECS
 		// Tables
 		EntityTable root;
 		Util::SparseArray<EntityTable> tablePool;
-		Util::SparseArray<EntityTable*> pendingTables;
 		Hashmap<EntityTable*> tableTypeHashMap;
+
+		// Table edge cache
+		TableGraphEdge* freeEdge = nullptr;
+
+		// Pending tables
+		Util::SparseArray<EntityTable*> pendingTables;
 
 		// Component
 		Hashmap<ComponentRecord*> compRecordMap;
 		Util::SparseArray<ComponentTypeInfo> compTypePool;	// Component reflect type info
-
-		// Graph
-		TableGraphEdge* freeEdge = nullptr;
 
 		// Query
 		Util::SparseArray<QueryImpl> queryPool;
@@ -567,22 +570,32 @@ namespace ECS
 			return INVALID_ENTITY;
 		}
 
-		EntityID IsEntityAlive(EntityID entity)const override
+		bool EntityExists(EntityID entity)const override
+		{
+			ECS_ASSERT(entity != INVALID_ENTITY);
+			return entityPool.CheckExsist(entity);
+		}
+
+		bool IsEntityValid(EntityID entity)const
 		{
 			if (entity == INVALID_ENTITY)
-				return INVALID_ENTITY;
+				return false;
 
-			if (entityPool.CheckExsist(entity))
-				return entity;
+			// Entity identifiers should not contain flag bits
+			if (entity & ECS_ROLE_MASK)
+				return false;
 
-			return false;
-		}
+			if (!EntityExists(entity))
+				return ECS_GENERATION(entity) == 0;
 
-		EntityType GetEntityType(EntityID entity)const override
-		{
-			return EMPTY_ENTITY_TYPE;
+			return IsEntityAlive(entity);
 		}
 			
+		bool IsEntityAlive(EntityID entity)const
+		{
+			return entityPool.Get(entity) != nullptr;
+		}
+		
 		void DeleteEntity(EntityID entity) override
 		{ 
 			ECS_ASSERT(entity != INVALID_ENTITY);
@@ -617,15 +630,15 @@ namespace ECS
 				EntityID re = ECS_GET_PAIR_FIRST(entity);
 				EntityID comp = ECS_GET_PAIR_SECOND(entity);
 
-				if (IsEntityAlive(re) != re)
+				if (GetAliveEntity(re) != re)
 					entityPool.Ensure(re);
 
-				if (IsEntityAlive(comp) != comp)
+				if (GetAliveEntity(comp) != comp)
 					entityPool.Ensure(comp);
 			}
 			else
 			{
-				if (IsEntityAlive(StripGeneration(entity)) == entity)
+				if (GetAliveEntity(StripGeneration(entity)) == entity)
 					return;
 
 				entityPool.Ensure(entity);
@@ -781,34 +794,39 @@ namespace ECS
 		void* GetOrCreateComponent(EntityID entity, EntityID compID) override
 		{
 			bool isAdded = false;
-			InternalEntityInfo info = {};
-			void* comp = GetOrCreateMutable(entity, compID, &info, &isAdded);
+			void* comp = GetOrCreateMutableByID(entity, compID, &isAdded);
 			ECS_ASSERT(comp != nullptr);
 			return comp;
 		}
 
 		void AddComponent(EntityID entity, EntityID compID) override
 		{
-			ECS_ASSERT(IsEntityAlive(entity));
-
-			InternalEntityInfo info = {};
-			GetInternalEntityInfo(info, entity);
-
-			EntityTableDiff diff = {};
-			EntityTable* newTable = TableTraverseAdd(info.table, compID, diff);
-			CommitTables(entity, &info, newTable, diff, true);
+			ECS_ASSERT(IsEntityValid(entity));
+			ECS_ASSERT(IsCompIDValid(compID));
+			AddComponentImpl(entity, compID);
 		}
 
 		void RemoveComponent(EntityID entity, EntityID compID)override
 		{
-			ECS_ASSERT(IsEntityAlive(entity));
+			ECS_ASSERT(IsEntityValid(entity));
+			ECS_ASSERT(IsCompIDValid(compID));
 
-			InternalEntityInfo info = {};
-			GetInternalEntityInfo(info, entity);
+			EntityInfo* info = entityPool.Get(entity);
+			if (info == nullptr || info->table == nullptr)
+				return;
 
 			EntityTableDiff diff = {};
-			EntityTable* newTable = TableTraverseRemove(info.table, compID, diff);
-			CommitTables(entity, &info, newTable, diff, true);
+			EntityTable* newTable = TableTraverseRemove(info->table, compID, diff);
+			CommitTables(entity, info, newTable, diff, true);
+		}
+
+		void AddComponentImpl(EntityID entity, EntityID compID)
+		{
+			EntityInfo* info = entityPool.Ensure(entity);
+			EntityTableDiff diff = {};
+			EntityTable* srcTable = info->table;
+			EntityTable* newTable = TableTraverseAdd(srcTable, compID, diff);
+			CommitTables(entity, info, newTable, diff, true);
 		}
 
 		////////////////////////////////////////////////////////////////////////////////
@@ -1700,15 +1718,18 @@ namespace ECS
 
 		bool EntityTraverseAdd(EntityID entity, const EntityCreateDesc& desc, bool nameAssigned, bool isNewEntity)
 		{
-			EntityTable* srcTable = nullptr, * table = nullptr;
-			InternalEntityInfo info = {};
+			EntityTable* srcTable = nullptr, *table = nullptr;
+			EntityInfo* info = nullptr;
+
+			// Get existing table
 			if (!isNewEntity)
 			{
-				if (GetInternalEntityInfo(info, entity))
-					table = info.table;
+				info = entityPool.Get(entity);
+				if (info != nullptr)
+					table = info->table;
 			}
 
-			EntityTableDiff diff = {};
+			EntityTableDiff diff = EMPTY_TABLE_DIFF;
 
 			// Add name component
 			const char* name = desc.name;
@@ -1718,7 +1739,7 @@ namespace ECS
 			// Commit entity table
 			if (srcTable != table)
 			{
-				CommitTables(entity, &info, table, diff, true);
+				CommitTables(entity, info, table, diff, true);
 			}
 
 			if (name && !nameAssigned)
@@ -1847,22 +1868,6 @@ namespace ECS
 			return it->second;
 		}
 
-		bool GetInternalEntityInfo(InternalEntityInfo& internalInfo, EntityID entity)
-		{
-			internalInfo.entityInfo = nullptr;
-			internalInfo.row = 0;
-			internalInfo.table = nullptr;
-
-			EntityInfo* info = entityPool.Get(entity);
-			if (info == nullptr)
-				return false;
-
-			internalInfo.entityInfo = info;
-			internalInfo.row = info->row;
-			internalInfo.table = info->table;
-			return true;
-		}
-
 		// Get alive entity, is essentially used for PariEntityID
 		EntityID GetAliveEntity(EntityID entity)
 		{
@@ -1875,16 +1880,42 @@ namespace ECS
 			if (IsEntityAlive(entity))
 				return entity;
 
-			ECS_ASSERT(ECS_GENERATION(entity) == 0);
+			// Make sure id does not have generation
+			ECS_ASSERT((U32)entity == entity);
 
-			return entityPool.GetAliveIndex(entity);
+			// Get current alived entity with generation
+			EntityID current = entityPool.GetAliveIndex(entity);
+			if (current == INVALID_ENTITY)
+				return INVALID_ENTITY;
+
+			return current;
 		}
 
 		// Check id is PropertyNone
 		bool CheckIDHasPropertyNone(EntityID id)
 		{
 			return (id == EcsPropertyNone) || (ECS_HAS_ROLE(id, EcsRolePair)
-				&& (ECS_GET_PAIR_FIRST(id) || ECS_GET_PAIR_SECOND(id)));
+				&& (ECS_GET_PAIR_FIRST(id) == EcsPropertyNone || 
+					ECS_GET_PAIR_SECOND(id) == EcsPropertyNone));
+		}
+
+		bool IsCompIDValid(EntityID id)
+		{
+			if (id == INVALID_ENTITY)
+				return false;
+			
+			if (CheckIDHasPropertyNone(id))
+				return false;
+
+			if (ECS_HAS_ROLE(id, EcsRolePair))
+			{
+				if (!ECS_GET_PAIR_FIRST(id))
+					return false;
+
+				if (!ECS_GET_PAIR_SECOND(id))
+					return false;
+			}
+			return true;
 		}
 
 		// Get a single real type id
@@ -2109,7 +2140,7 @@ namespace ECS
 			{
 				do {
 					ret = lastComponentID++;
-				} while (IsEntityAlive(ret) != INVALID_ENTITY && ret <= HiComponentID);
+				} while (EntityExists(ret) != INVALID_ENTITY && ret <= HiComponentID);
 			}
 
 			if (ret == INVALID_ENTITY || ret >= HiComponentID)
@@ -2144,30 +2175,34 @@ namespace ECS
 
 		void* GetOrCreateMutableByID(EntityID entity, EntityID compID, bool* added)
 		{
-			InternalEntityInfo internalInfo = {};
-			void* ret = GetOrCreateMutable(entity, compID, &internalInfo, added);
+			
+
+			EntityInfo* info = entityPool.Ensure(entity);
+			void* ret = GetOrCreateMutable(entity, compID, info, added);
 			ECS_ASSERT(ret != nullptr);
 			return ret;
 		}
 
-		void* GetOrCreateMutable(EntityID entity, EntityID compID, InternalEntityInfo* info, bool* isAdded)
+		void* GetOrCreateMutable(EntityID entity, EntityID compID, EntityInfo* info, bool* isAdded)
 		{
+			ECS_ASSERT(compID != 0);
+			ECS_ASSERT(info != nullptr);
+			ECS_ASSERT((compID & ECS_COMPONENT_MASK) == compID || ECS_HAS_ROLE(compID, EcsRolePair));
+
 			void* ret = nullptr;
-			if (GetInternalEntityInfo(*info, entity) && info->table != nullptr)
+			if (info->table != nullptr)
 				ret = GetComponentFromTable(*info->table, info->row, compID);
 
 			if (ret == nullptr)
 			{
-				EntityTable* oldTable = info->table;
 				AddComponentForEntity(entity, info, compID);
 
-				GetInternalEntityInfo(*info, entity);
 				ECS_ASSERT(info != nullptr);
 				ECS_ASSERT(info->table != nullptr);
 				ret = GetComponentFromTable(*info->table, info->row, compID);
 
 				if (isAdded != nullptr)
-					*isAdded = oldTable != info->table;
+					*isAdded = true;
 			}
 			else
 			{
@@ -2185,8 +2220,8 @@ namespace ECS
 
 		void SetComponent(EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove)
 		{
-			InternalEntityInfo info = {};
-			void* dst = GetOrCreateMutable(entity, compID, &info, NULL);
+			EntityInfo* info = entityPool.Ensure(entity);
+			void* dst = GetOrCreateMutable(entity, compID, info, NULL);
 			ECS_ASSERT(dst != NULL);
 			if (ptr)
 			{
@@ -2219,7 +2254,7 @@ namespace ECS
 			}
 		}
 
-		void AddComponentForEntity(EntityID entity, InternalEntityInfo* info, EntityID compID)
+		void AddComponentForEntity(EntityID entity, EntityInfo* info, EntityID compID)
 		{
 			EntityTableDiff diff = {};
 			EntityTable* srcTable = info->table;
@@ -2550,73 +2585,62 @@ namespace ECS
 			return GetTableRecordFromCache(&compRecord->cache, table);
 		}
 		
-		I32 MoveTableEntity(EntityID entity, InternalEntityInfo* info, EntityTable* srcTable, EntityTable* dstTable, EntityTableDiff& diff, bool construct)
+		I32 MoveTableEntity(EntityID entity, EntityInfo* entityInfo, EntityTable* srcTable, EntityTable* dstTable, EntityTableDiff& diff, bool construct)
 		{
-			// Get entity info
-			EntityInfo* entityInfo = info->entityInfo;
-			if (entityInfo == nullptr)
-			{
-				entityInfo = entityPool.Ensure(entity);
-				info->entityInfo = entityInfo;
-			}
-			ECS_ASSERT(entityInfo != nullptr && entityInfo == entityPool.Get(entity));
+			ECS_ASSERT(entityInfo != nullptr);
+			ECS_ASSERT(entityInfo == entityPool.Get(entity));
+			ECS_ASSERT(IsEntityAlive(entity));
+
+			U32 srcRow = entityInfo->row;
+			ECS_ASSERT(srcRow >= 0);
 
 			// Add a new entity for dstTable (Just reserve storage)
 			U32 newRow = dstTable->AppendNewEntity(entity, entityInfo, false);
-			ECS_ASSERT(srcTable->entities.size() > info->row);
+			ECS_ASSERT(srcTable->entities.size() > entityInfo->row);
 
 			// Move comp datas from src table to new table of entity
 			if (!srcTable->type.empty())
-				MoveTableEntityImpl(entity, srcTable, info->row, entity, dstTable, newRow, construct);
+				MoveTableEntityImpl(entity, srcTable, entityInfo->row, entity, dstTable, newRow, construct);
 
 			entityInfo->row = newRow;
 			entityInfo->table = dstTable;
 
 			// Remove old entity from src table
-			srcTable->DeleteEntity(info->row, false);
+			srcTable->DeleteEntity(srcRow, false);
 
 			return newRow;
 		}
 
-		void CommitTables(EntityID entity, InternalEntityInfo* info, EntityTable* dstTable, EntityTableDiff& diff, bool construct)
+		void CommitTables(EntityID entity, EntityInfo* info, EntityTable* dstTable, EntityTableDiff& diff, bool construct)
 		{
-			EntityTable* srcTable = info->table;
-			if (srcTable == dstTable)
-				return;
-
+			EntityTable* srcTable = info != nullptr ? info->table : nullptr;
 			ECS_ASSERT(dstTable != nullptr);
 			if (srcTable != nullptr)
 			{
-				if (!dstTable->type.empty())
-				{
-					info->row = MoveTableEntity(entity, info, srcTable, dstTable, diff, construct);
-					info->table = dstTable;
+				if (!dstTable->type.empty()) {
+					MoveTableEntity(entity, info, srcTable, dstTable, diff, construct);
 				}
-				else
-				{
+				else {
 					srcTable->DeleteEntity(info->row, true);
-					EntityInfo* entityInfo = entityPool.Get(entity);
-					if (entityInfo)
-					{
-						entityInfo->table = nullptr;
-						entityInfo->row = 0;
-					}
+					info->table = nullptr;
 				}
 			}
 			else
 			{
-				EntityInfo* entityInfo = info->entityInfo;
-				if (entityInfo == nullptr)
-					entityInfo = entityPool.Ensure(entity);
-
-				U32 newRow = dstTable->AppendNewEntity(entity, entityInfo, construct);
-				entityInfo->row = newRow;
-				entityInfo->table = dstTable;
-
-				info->entityInfo = entityInfo;
-				info->row = newRow;
-				info->table = dstTable;
+				if (!dstTable->type.empty())
+					info = TableNewEntityImpl(entity, info, dstTable, construct);
 			}
+		}
+
+		EntityInfo* TableNewEntityImpl(EntityID entity, EntityInfo* entityInfo, EntityTable* table, bool construct)
+		{
+			if (entityInfo == nullptr)
+				entityInfo = entityPool.Ensure(entity);
+
+			U32 newRow = table->AppendNewEntity(entity, entityInfo, construct);		
+			entityInfo->row = newRow;
+			entityInfo->table = table;
+			return entityInfo;
 		}
 
 		void MoveTableEntityImpl(EntityID srcEntity, EntityTable* srcTable, I32 srcRow, EntityID dstEntity, EntityTable* dstTable, I32 dstRow, bool construct)
