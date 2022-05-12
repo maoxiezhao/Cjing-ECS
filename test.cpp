@@ -228,11 +228,11 @@ TEST_CASE("ChildOf", "ECS")
 
     // Query
     auto query = world->CreateQuery<Position, Position, Position>()
-        .Item(0).Obj<Local>()
-        .Item(1).Obj<Global>()
-        .Item(2).Obj<Global>()
-        .Item(2)
-        .Set(ECS::QueryItemFlagParent | ECS::QueryItemFlagCascade)
+        .TermIndex(0).Obj<Local>()
+        .TermIndex(1).Obj<Global>()
+        .TermIndex(2).Obj<Global>()
+        .TermIndex(2)
+        .Set(ECS::TermFlagParent | ECS::TermFlagCascade)
         .Build();
     query.ForEach([&](ECS::EntityID entity, Position& p1, Position& p2, Position& pOut) {
         queue.push_back(entity);
@@ -247,11 +247,11 @@ TEST_CASE("ChildOf", "ECS")
 
     // System
     auto system = world->CreateSystem<Position, Position, Position>()
-        .Item(0).Obj<Local>()
-        .Item(1).Obj<Global>()
-        .Item(2).Obj<Global>()
-        .Item(2)
-        .Set(ECS::QueryItemFlagParent | ECS::QueryItemFlagCascade)
+        .TermIndex(0).Obj<Local>()
+        .TermIndex(1).Obj<Global>()
+        .TermIndex(2).Obj<Global>()
+        .TermIndex(2)
+        .Set(ECS::TermFlagParent | ECS::TermFlagCascade)
         .ForEach([&](ECS::EntityID entity, Position& p1, Position& p2, Position& pOut) {
             queue.push_back(entity);
         });
@@ -261,3 +261,26 @@ TEST_CASE("ChildOf", "ECS")
     CHECK(queue[2] == e4.entity);
     CHECK(queue[3] == e3.entity);
 }
+
+//int main()
+//{
+//    U32 aTimes = 0;
+//    U32 bTimes = 0;
+//    std::unique_ptr<ECS::World> world = ECS::World::Create();
+//    for (int i = 0; i < 5; i++)
+//    {
+//        world->CreateEntity((std::string("A") + std::to_string(i)).c_str())
+//            .With<PositionComponent>()
+//            .With<VelocityComponent>();
+//    }
+//
+//    auto query = world->CreateQuery<PositionComponent, VelocityComponent>().Build();
+//    query.ForEach([&](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
+//        aTimes++;
+//        });
+//    query.ForEach([&](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
+//        bTimes++;
+//        });
+//
+//    assert(aTimes == bTimes);
+//}

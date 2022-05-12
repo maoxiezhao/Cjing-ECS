@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "common.h"
+#include "ecs_def.h"
 #include "ecs_util.h"
 
 namespace ECS
@@ -14,21 +15,6 @@ namespace ECS
 	class Query;
 	template<typename... Comps>
 	struct QueryBuilder;
-
-	using EntityID = U64;
-	using EntityIDs = Vector<EntityID>;
-	using EntityType = Vector<EntityID>;
-	using QueryID = U64;
-
-	static const EntityID INVALID_ENTITY = 0;
-	static const EntityType EMPTY_ENTITY_TYPE = EntityType();
-	static const size_t MAX_QUERY_ITEM_COUNT = 16;
-	extern const size_t ENTITY_PAIR_FLAG;
-
-	#define ECS_ENTITY_HI(e) (static_cast<U32>((e) >> 32))
-	#define ECS_ENTITY_LOW(e) (static_cast<U32>(e))
-	#define ECS_ENTITY_COMBO(lo, hi) ((static_cast<U64>(hi) << 32) + static_cast<U32>(lo))
-	#define ECS_MAKE_PAIR(re, obj) (ENTITY_PAIR_FLAG | ECS_ENTITY_COMBO(obj, re))
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Components
@@ -108,87 +94,6 @@ namespace ECS
 		size_t alignment;
 		size_t size;
 		bool isSet;
-	};
-
-	struct EntityCreateDesc
-	{
-		EntityID entity = INVALID_ENTITY;
-		const char* name = nullptr;
-		bool useComponentID = false;	// For component id (0~256)
-	};
-
-	struct ComponentCreateDesc
-	{
-		EntityCreateDesc entity = {};
-		size_t alignment = 0;
-		size_t size = 0;
-	};
-
-	enum QueryItemFlag
-	{
-		QueryItemFlagParent = 1 << 0,
-		QueryItemFlagCascade = 1 << 1
-	};
-
-	struct QueryItem
-	{
-		EntityID pred;
-		EntityID obj;
-		EntityID compID;
-		U64 role;
-
-		struct QueryItemSet
-		{
-			U32 flags;
-			U64 relation;
-		} set;
-	};
-
-	struct QueryIteratorImpl;
-	// TODO: remove impl
-	struct QueryIterator
-	{
-	public:
-		World* world = nullptr;
-		QueryItem* items = nullptr;
-		size_t itemCount = 0;
-		void* invoker = nullptr;
-
-		size_t entityCount = 0;
-		EntityID* entities = nullptr;
-		Vector<void*> compDatas;
-
-	public:
-		QueryIterator();
-		~QueryIterator();
-		QueryIterator(QueryIterator&& rhs)noexcept;
-		void operator=(QueryIterator&& rhs)noexcept;
-
-		QueryIterator(const QueryIterator& rhs) = delete;
-		void operator=(const QueryIterator& rhs) = delete;
-
-	private:
-		friend class World;
-		friend struct WorldImpl; // TODO
-		QueryIteratorImpl* impl = nullptr;
-	};
-
-	struct QueryCreateDesc
-	{
-		QueryItem items[MAX_QUERY_ITEM_COUNT];
-		bool cached = true; // TODO
-	};
-
-	using InvokerDeleter = void(*)(void* ptr);
-	using SystemAction = void(*)(QueryIterator* iter);
-
-	struct SystemCreateDesc
-	{
-		EntityCreateDesc entity = {};
-		QueryCreateDesc query = {};
-		SystemAction action;
-		void* invoker;
-		InvokerDeleter invokerDeleter;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -310,10 +215,9 @@ namespace ECS
 		// Query
 		template<typename... Comps>
 		QueryBuilder<Comps...> CreateQuery();
-		virtual QueryID CreateQuery(const QueryCreateDesc& desc) = 0;
-		virtual void DestroyQuery(QueryID queryID) = 0;
-		virtual QueryIterator GetQueryIterator(QueryID queryID) = 0;
-		virtual bool QueryIteratorNext(QueryIterator& iter) = 0;
+		virtual QueryImpl* CreateQuery(const QueryCreateDesc& desc) = 0;
+		virtual void DestroyQuery(QueryImpl* query) = 0;
+		virtual Iterator GetQueryIterator(QueryImpl* query) = 0;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -548,20 +452,20 @@ namespace ECS
 		struct CompTuple
 		{
 			using Array = Array<void*, sizeof...(Comps)>;
-			Array compsArray;
+			Array ptrs;
 
-			void Populate(QueryIterator* iter)
+			void Populate(Iterator* iter)
 			{
 				return PopulateImpl(iter, 0, static_cast<decay_t<Comps>*>(nullptr)...);
 			}
 
 		private:
-			void PopulateImpl(QueryIterator* iter, size_t) { return; }
+			void PopulateImpl(Iterator* iter, size_t) { return; }
 
 			template<typename CompPtr, typename... Comps>
-			void PopulateImpl(QueryIterator* iter, size_t index, CompPtr, Comps... comps)
+			void PopulateImpl(Iterator* iter, size_t index, CompPtr, Comps... comps)
 			{
-				compsArray[index] = static_cast<CompPtr>(iter->compDatas[index]);
+				ptrs[index] = static_cast<CompPtr>(iter->ptrs[index]);
 				return PopulateImpl(iter, index + 1, comps...);
 			}
 		};
@@ -576,7 +480,7 @@ namespace ECS
 			explicit EachInvoker(const Func& func_) noexcept : func(func_) {}
 
 			// SystemCreateDesc.invoker => EachInvoker
-			static void Run(QueryIterator* iter)
+			static void Run(Iterator* iter)
 			{
 				EachInvoker* invoker = static_cast<EachInvoker*>(iter->invoker);
 				ECS_ASSERT(invoker != nullptr);
@@ -584,19 +488,19 @@ namespace ECS
 			}
 
 			// Get entity and components for func
-			void Invoke(QueryIterator* iter)
+			void Invoke(Iterator* iter)
 			{
 				CompTuple<Comps...> compTuple;
 				compTuple.Populate(iter);
-				InvokeImpl(iter, func, 0, compTuple.compsArray);
+				InvokeImpl(iter, func, 0, compTuple.ptrs);
 			}
 
 		private:
 
 			template<typename... Args, enable_if_t<sizeof...(Comps) == sizeof...(Args), int> = 0>
-			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray&, Args... args)
+			static void InvokeImpl(Iterator* iter, const Func& func, size_t index, CompArray&, Args... args)
 			{
-				for (I32 row = 0; row < iter->entityCount; row++)
+				for (I32 row = 0; row < iter->count; row++)
 				{
 					EntityID entity = iter->entities[row];
 					func(entity, (EachColumn<std::remove_reference_t<Comps>>(args, row).Get())...);
@@ -604,7 +508,7 @@ namespace ECS
 			}
 
 			template<typename... Args, enable_if_t<sizeof...(Comps) != sizeof...(Args), int> = 0>
-			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray& compArr, Args... args)
+			static void InvokeImpl(Iterator* iter, const Func& func, size_t index, CompArray& compArr, Args... args)
 			{
 				InvokeImpl(iter, func, index + 1, compArr, args..., compArr[index]);
 			}
@@ -623,7 +527,7 @@ namespace ECS
 			explicit IterInvoker(const Func& func_) noexcept : func(func_) {}
 
 			// SystemCreateDesc.invoker => IterInvoker
-			static void Run(QueryIterator* iter)
+			static void Run(Iterator* iter)
 			{
 				IterInvoker* invoker = static_cast<IterInvoker*>(iter->invoker);
 				ECS_ASSERT(invoker != nullptr);
@@ -631,24 +535,24 @@ namespace ECS
 			}
 
 			// Get entity and components for func
-			void Invoke(QueryIterator* iter)
+			void Invoke(Iterator* iter)
 			{
 				CompTuple<Comps...> compTuple;
 				compTuple.Populate(iter);
-				InvokeImpl(iter, func, 0, compTuple.compsArray);
+				InvokeImpl(iter, func, 0, compTuple.ptrs);
 			}
 
 		private:
 
 			template<typename... Args, enable_if_t<sizeof...(Comps) == sizeof...(Args), int> = 0>
-			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray&, Args... args)
+			static void InvokeImpl(Iterator* iter, const Func& func, size_t index, CompArray&, Args... args)
 			{
-				EntityIterator entityIter(iter->entities, iter->entityCount);
+				EntityIterator entityIter(iter->entities, iter->count);
 				func(entityIter, (IterColumn<std::remove_reference_t<Comps>>(args).Get())...);
 			}
 
 			template<typename... Args, enable_if_t<sizeof...(Comps) != sizeof...(Args), int> = 0>
-			static void InvokeImpl(QueryIterator* iter, const Func& func, size_t index, CompArray& compArr, Args... args)
+			static void InvokeImpl(Iterator* iter, const Func& func, size_t index, CompArray& compArr, Args... args)
 			{
 				InvokeImpl(iter, func, index + 1, compArr, args..., compArr[index]);
 			}
@@ -667,8 +571,8 @@ namespace ECS
 		QueryIteratorBase() {};
 		virtual ~QueryIteratorBase() {}
 
-		virtual QueryIterator GetQueryIterator() = 0;
-		virtual bool NextQueryIterator(QueryIterator& iter) = 0;
+		virtual Iterator GetQueryIterator() = 0;
+		virtual bool NextQueryIterator(Iterator& iter) = 0;
 
 		template<typename Func>
 		void ForEach(Func&& func)
@@ -686,7 +590,7 @@ namespace ECS
 		template<template<typename Func, typename ... Args> class Invoker, typename Func>
 		void Iterate(Func&& func)
 		{
-			QueryIterator iter = this->GetQueryIterator();
+			Iterator iter = this->GetQueryIterator();
 			while (this->NextQueryIterator(iter))
 				Invoker<decay_t<Func>, Comps...>(ECS_FWD(func)).Invoke(&iter);
 		}
@@ -698,39 +602,33 @@ namespace ECS
 	public:
 		QueryBuilderBase(World* world_) :
 			world(world_),
-			compIDs({ (ComponentType<Comps>::ID(*world_))... })
+			ids({ (ComponentType<Comps>::ID(*world_))... })
 		{
-			for (int i = 0; i < compIDs.size(); i++)
+			for (int i = 0; i < ids.size(); i++)
 			{
-				QueryItem& item = queryDesc.items[i];
-				item.pred = compIDs[i];
+				Term& term = queryDesc.filter.terms[i];
+				term.pred = ids[i];
 			}
 		}
 
-		Base& NoCached()
+		Base& TermIndex(I32 index)
 		{
-			queryDesc.cached = false;
-			return *this;
-		}
-
-		Base& Item(I32 index)
-		{
-			currentItem = &queryDesc.items[index];
+			currentTerm = &queryDesc.filter.terms[index];
 			return *this;
 		}
 
 		template<typename C>
 		Base& Obj()
 		{
-			ECS_ASSERT(currentItem != nullptr);
-			currentItem->obj = ComponentType<C>::ID(*world);
+			ECS_ASSERT(currentTerm != nullptr);
+			currentTerm->obj = ComponentType<C>::ID(*world);
 			return *this;
 		}
 
 		Base& Set(U32 flags)
 		{
-			ECS_ASSERT(currentItem != nullptr);
-			currentItem->set.flags = flags;
+			ECS_ASSERT(currentTerm != nullptr);
+			currentTerm->set.flags = flags;
 			return *this;
 		}
 
@@ -745,9 +643,9 @@ namespace ECS
 
 	protected:
 		World* world;
-		Array<U64, sizeof...(Comps)> compIDs;
+		Array<U64, sizeof...(Comps)> ids;
 		QueryCreateDesc queryDesc = {};
-		QueryItem* currentItem = nullptr;
+		Term* currentTerm = nullptr;
 	};
 
 	template<typename... Comps>
@@ -763,39 +661,39 @@ namespace ECS
 		Query(World* world_, const QueryCreateDesc& desc_) :
 			world(world_), 
 			queryDesc(desc_),
-			queryID(0) 
+			impl(nullptr)
 		{
-			queryID = world_->CreateQuery(desc_);
+			impl = world_->CreateQuery(desc_);
 		}
 
 		bool Valid()const 
 		{
-			return queryID > 0;
+			return impl != nullptr;
 		}
 
 		void Free()
 		{
-			if (queryID > 0)
+			if (impl != nullptr)
 			{
-				this->world->DestroyQuery(queryID);
-				queryID = 0;
+				this->world->DestroyQuery(impl);
+				impl = nullptr;
 			}
 		}
 
-		QueryIterator GetQueryIterator()override
+		Iterator GetQueryIterator()override
 		{
-			return std::move(this->world->GetQueryIterator(queryID));
+			return this->world->GetQueryIterator(impl);
 		}
 
-		bool NextQueryIterator(QueryIterator& iter)override
+		bool NextQueryIterator(Iterator& iter)override
 		{
-			return this->world->QueryIteratorNext(iter);
+			return QueryNextInstanced(&iter);
 		}
 
 	private:
 		World* world;
 		QueryCreateDesc queryDesc;
-		QueryID queryID;
+		QueryImpl* impl;
 	};
 
 	template<typename... Comps>
@@ -837,7 +735,6 @@ namespace ECS
 			sysDesc.invoker = invoker;
 			sysDesc.invokerDeleter = reinterpret_cast<InvokerDeleter>(ECS_DELETE_OBJECT<Invoker>);
 			sysDesc.query = this->queryDesc;
-			sysDesc.query.cached = true;
 			return this->world->InitNewSystem(sysDesc);
 		}
 
