@@ -107,6 +107,7 @@ namespace ECS
 
 	typedef void (*IterInitAction)(World* world, const void* iterable, Iterator* it, Term* filter);
 	typedef bool (*IterNextAction)(Iterator* it);
+	typedef void (*IterCallbackAction)(Iterator* it);
 	
 	struct Iterable
 	{
@@ -220,6 +221,10 @@ namespace ECS
 
 		// Context
 		void* invoker = nullptr;
+		void* ctx = nullptr;
+
+		// Event
+		EntityID event;
 
 		// Chained iters
 		Iterator* chainIter = nullptr;
@@ -271,4 +276,53 @@ namespace ECS
 
 	bool FilterNextInstanced(Iterator* it);
 	bool QueryNextInstanced(Iterator* it);
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Event
+	////////////////////////////////////////////////////////////////////////////////
+
+	#define ECS_TRIGGER_MAX_EVENT_COUNT (8)
+
+	struct Observable;
+
+	struct TriggerDesc
+	{
+		Term term;
+		IterCallbackAction callback;
+		void* ctx = nullptr;
+		EntityID events[ECS_TRIGGER_MAX_EVENT_COUNT];
+		I32 eventCount = 0;
+		Observable* observable = nullptr;
+
+		// Used if this trigger is part of Observer
+		I32* eventID = nullptr;
+	};
+
+	struct ObserverDesc
+	{
+		EntityID events[ECS_TRIGGER_MAX_EVENT_COUNT];
+		IterCallbackAction callback;
+		FilterCreateDesc filterDesc;
+		void* ctx;
+	};
+
+	struct Observer
+	{
+		EntityID events[ECS_TRIGGER_MAX_EVENT_COUNT];
+		I32 eventCount = 0;
+		IterCallbackAction callback;
+		Filter filter;
+		U64 id;
+		I32 eventID;
+		std::vector<EntityID> triggers;
+		void* ctx;
+	};
+
+	struct EventDesc
+	{
+		EntityID event;
+		EntityType ids;
+		EntityTable* table;
+		Observable* observable;
+	};
 }

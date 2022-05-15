@@ -1,12 +1,14 @@
 ﻿#include "ecs.h"
 
+// Finished
+// 1. Query refactor
+// 2. Event/Trigger/Observer
+
 // TODO
 // 1. Work pipeline
 // 2. Mult threads
-// 3. Query refactor
-// 4. Table merage
-// 5. Shared component (GetBaseComponent)
-// 6. Serialization
+// 3. Shared component (GetBaseComponent)
+// 4. Serialization
 
 namespace ECS
 {
@@ -63,17 +65,20 @@ namespace ECS
 	const U32 FirstUserComponentID = 32;               // [32 - 256] user components	
 	const U32 FirstUserEntityID = HiComponentID + 128; // [256 - 384] builtin tags
 
-	EntityID BuiltinComponentID = HiComponentID;
-	#define BUILTIN_COMPONENT_ID (BuiltinComponentID++)
+	EntityID BuiltinEntityID = HiComponentID;
+	#define BUILTIN_ENTITY_ID (BuiltinEntityID++)
 
 	// properties
-	const EntityID EcsPropertyTag = BUILTIN_COMPONENT_ID;
-	const EntityID EcsPropertyNone = BUILTIN_COMPONENT_ID;
+	const EntityID EcsPropertyTag = BUILTIN_ENTITY_ID;
+	const EntityID EcsPropertyNone = BUILTIN_ENTITY_ID;
 	// Tags
-	const EntityID EcsTagPrefab = BUILTIN_COMPONENT_ID;
+	const EntityID EcsTagPrefab = BUILTIN_ENTITY_ID;
+	// Events
+	const EntityID EcsEventTableEmpty = BUILTIN_ENTITY_ID;
+	const EntityID EcsEventTableFill = BUILTIN_ENTITY_ID;
 	// Relations
-	const EntityID EcsRelationIsA = BUILTIN_COMPONENT_ID;
-	const EntityID EcsRelationChildOf = BUILTIN_COMPONENT_ID;
+	const EntityID EcsRelationIsA = BUILTIN_ENTITY_ID;
+	const EntityID EcsRelationChildOf = BUILTIN_ENTITY_ID;
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Definition
@@ -108,10 +113,6 @@ namespace ECS
 	{
 		memset(ptr, 0, size * count);
 	}
-
-	static bool FlushTableState(WorldImpl* world, EntityTable* table, EntityID id, I32 column);
-	using EntityIDAction = bool(*)(WorldImpl*, EntityTable*, EntityID, I32);
-	bool ForEachEntityID(WorldImpl* world, EntityTable* table, EntityIDAction action);
 
 	void InitFilterIter(World* world, const void* iterable, Iterator* it, Term* filter);
 	bool NextFilterIter(Iterator* it);
@@ -172,7 +173,16 @@ namespace ECS
 
 		void InsertTableIntoCache(const EntityTable* table, EntityTableCacheItem* cacheNode);
 		EntityTableCacheItem* RemoveTableFromCache(EntityTable* table);
-		void SetTableCacheState(EntityTable* table, bool isEmpty);
+		EntityTableCacheItem* GetTableCache(EntityTable* table);
+		bool SetTableCacheState(EntityTable* table, bool isEmpty);
+
+		I32 GetTableCount()const {
+			return tables.count;
+		}
+
+		I32 GetEmptyTableCount()const {
+			return emptyTables.count;
+		}
 
 	private:
 		void ListInsertNode(EntityTableCacheItem* node, bool isEmpty)
@@ -330,12 +340,15 @@ namespace ECS
 
 		// Tables
 		EntityTableCache<QueryTableCache> cache; // All matched tables <QueryTableCache>
-		QueryTableMatchList matchList;	         // Non-empty ordered tables
+		QueryTableMatchList tableList;	         // Non-empty ordered tables
 
 		// Group
 		EntityID groupByID = INVALID_ENTITY;
 		Term* groupByItem = nullptr;
 		Map<QueryTableMatchList> groups;
+
+		// Observer
+		EntityID observer = INVALID_ENTITY;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -355,9 +368,42 @@ namespace ECS
 		EntityTable* table;
 	};
 
+	struct Trigger
+	{
+		Term term;
+		EntityID events[ECS_TRIGGER_MAX_EVENT_COUNT];
+		I32 eventCount = 0;
+		Observable* observable = nullptr;
+		IterCallbackAction callback;
+		void* ctx = nullptr;
+
+		// Used if this trigger is part of Observer
+		I32* eventID = nullptr;
+		I32 id = 0;
+		EntityID entity;
+	};
+
+	struct EventRecord
+	{
+		Map<Trigger*> triggers;
+		I32 triggerCount = 0;
+	};
+
+	struct EventRecords
+	{
+		Map<EventRecord> eventIds; // Map<CompID, EventRecord>
+	};
+
+	struct Observable
+	{
+		Util::SparseArray<EventRecords> events;	// Sparse<EventID, EventRecords>
+	};
+
 	////////////////////////////////////////////////////////////////////////////////
 	//// Builtin components
 	////////////////////////////////////////////////////////////////////////////////
+
+#define BuiltinCompDtor(type) type##_dtor
 
 	struct InfoComponent
 	{
@@ -380,9 +426,26 @@ namespace ECS
 		QueryImpl* query;
 	};
 
-	EntityID ECS_ENTITY_ID(InfoComponent) = 1;
-	EntityID ECS_ENTITY_ID(NameComponent) = 2;
-	EntityID ECS_ENTITY_ID(SystemComponent) = 3;
+	struct TriggerComponent
+	{
+		Trigger* trigger = nullptr;
+	};
+	static void BuiltinCompDtor(TriggerComponent)(World* world, EntityID* entities, size_t size, size_t count, void* ptr);
+
+	struct ObserverComponent
+	{
+		Observer* observer = nullptr;
+	};	
+	static void BuiltinCompDtor(ObserverComponent)(World* world, EntityID* entities, size_t size, size_t count, void* ptr);
+
+	EntityID BuiltinComponentID = 1;
+	#define BUILTIN_COMPONENT_ID (BuiltinComponentID++)
+
+	EntityID ECS_ENTITY_ID(InfoComponent) = BUILTIN_COMPONENT_ID;
+	EntityID ECS_ENTITY_ID(NameComponent) = BUILTIN_COMPONENT_ID;
+	EntityID ECS_ENTITY_ID(SystemComponent) = BUILTIN_COMPONENT_ID;
+	EntityID ECS_ENTITY_ID(TriggerComponent) = BUILTIN_COMPONENT_ID;
+	EntityID ECS_ENTITY_ID(ObserverComponent) = BUILTIN_COMPONENT_ID;
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// WorldImpl
@@ -409,7 +472,8 @@ namespace ECS
 		TableGraphEdge* freeEdge = nullptr;
 
 		// Pending tables
-		Util::SparseArray<EntityTable*> pendingTables;
+		Util::SparseArray<EntityTable*>* pendingTables;
+		Util::SparseArray<EntityTable*>* pendingBuffer;
 
 		// Component
 		Hashmap<ComponentRecord*> compRecordMap;
@@ -418,10 +482,22 @@ namespace ECS
 		// Query
 		Util::SparseArray<QueryImpl> queryPool;
 
+		// Events
+		Observable observable;
+		Util::SparseArray<Observer> observers;
+		Util::SparseArray<Trigger> triggers;
+		int32_t eventID = 0;	// Unique id is used to distinguish events
+
+		// Status
+		bool isReadonly = false;
 		bool isFini = false;
+		U32 defer = 0;
 
 		WorldImpl()
 		{
+			pendingTables = ECS_NEW_OBJECT<Util::SparseArray<EntityTable*>>();
+			pendingBuffer = ECS_NEW_OBJECT<Util::SparseArray<EntityTable*>>();
+
 			compRecordMap.reserve(HiComponentID);
 			entityPool.SetSourceID(&lastID);
 			if (!root.InitTable(this))
@@ -433,15 +509,18 @@ namespace ECS
 			id = queryPool.NewIndex();
 			ECS_ASSERT(id == 0);
 
-			SetupComponentIDs();
+			SetupComponentTypes();
 			InitBuiltinComponents();
-			InitBuiltinTags();
+			InitBuiltinEntites();
 			InitSystemComponent();
 		}
 
 		~WorldImpl()
 		{	
 			isFini = true;
+
+			// Begin defer to discard all operations (Add/Delete/Dtor)
+			BeginDefer();
 
 			// Free all tables, neet to skip id 0
 			size_t tabelCount = tablePool.Count();
@@ -452,7 +531,8 @@ namespace ECS
 					table->Release();
 			}
 			tablePool.Clear();
-			pendingTables.Clear();
+			pendingTables->Clear();
+			pendingBuffer->Clear();
 
 			// Free root table
 			root.Release();
@@ -473,6 +553,31 @@ namespace ECS
 
 			// Clear entity pool
 			entityPool.Clear();
+
+			ECS_DELETE_OBJECT(pendingBuffer);
+			ECS_DELETE_OBJECT(pendingTables);
+		}
+
+		void BeginDefer()
+		{
+			// TODO
+			defer++;
+		}
+
+		void EndDefer()
+		{
+			// TODO
+			FlushDefer();
+		}
+
+		bool FlushDefer()
+		{
+			if (--defer > 0)
+				return false;
+
+			// TODO
+			// Flush defer queue
+			return true;
 		}
 
 		const EntityBuilder& CreateEntity(const char* name) override
@@ -536,9 +641,25 @@ namespace ECS
 			return entityPool.Get(entity) != nullptr;
 		}
 		
+		bool DeferDeleteEntity(EntityID entity)
+		{
+			// TODO
+			if (defer > 0)
+			{
+				// TODO: Add a job into the defer queue
+				return true;
+			}
+
+			return false;
+		}
+
 		void DeleteEntity(EntityID entity) override
 		{ 
 			ECS_ASSERT(entity != INVALID_ENTITY);
+
+			if (DeferDeleteEntity(entity))
+				return;
+
 			EntityInfo* entityInfo = entityPool.Get(entity);
 			if (entityInfo == nullptr)
 				return;
@@ -1193,7 +1314,7 @@ namespace ECS
 					if (compRecord == nullptr)
 						return -2;
 
-					I32 tableCount = compRecord->cache.tables.count;
+					I32 tableCount = compRecord->cache.GetTableCount();
 					if (minTableCount == -1 || tableCount < minTableCount)
 					{
 						pivotItem = i;
@@ -1224,6 +1345,30 @@ namespace ECS
 		//// Query
 		////////////////////////////////////////////////////////////////////////////////
 
+		static void QueryNotifyTrigger(Iterator* it)
+		{
+			WorldImpl* world = (WorldImpl*)it->world;
+			Observer* observer = (Observer*)it->ctx;
+
+			// Check if this event is already handled
+			if (observer->eventID == world->eventID)
+				return;
+			observer->eventID = world->eventID;			
+
+			QueryImpl* query = (QueryImpl*)observer->ctx;
+			ECS_ASSERT(query != nullptr);
+			ECS_ASSERT(it->table != nullptr);
+
+			// Check the table is matching for query
+			if (world->GetTableRecordFromCache(&query->cache, it->table) == nullptr)
+				return;
+
+			if (it->event == EcsEventTableFill)
+				world->UpdateQueryTableMatch(query, it->table, false);
+			else if (it->event == EcsEventTableEmpty)
+				world->UpdateQueryTableMatch(query, it->table, true);
+		}
+
 		QueryImpl* CreateQuery(const QueryCreateDesc& desc) override
 		{
 			ECS_ASSERT(isFini == false);
@@ -1238,6 +1383,21 @@ namespace ECS
 
 			ret->iterable.init = InitQueryIter;
 			ret->prevMatchingCount = -1;
+
+			// Create event observer
+			if (ret->filter.termCount > 0)
+			{
+				ObserverDesc observerDesc = {};
+				observerDesc.callback = QueryNotifyTrigger;
+				observerDesc.events[0] = EcsEventTableEmpty;
+				observerDesc.events[1] = EcsEventTableFill;
+				observerDesc.filterDesc = desc.filter;
+				observerDesc.ctx = ret;
+
+				ret->observer = CreateObserver(observerDesc);
+				if (ret->observer == INVALID_ENTITY)
+					goto error;
+			}
 
 			// Process query flags
 			ProcessQueryFlags(ret);
@@ -1266,9 +1426,35 @@ namespace ECS
 				FiniQuery(query);
 		}
 
-		QueryTableMatch* QueryAddTableMatchCache(QueryTableCache* cache)
+		void UpdateQueryTableMatch(QueryImpl* query, EntityTable* table, bool isEmpty)
+		{
+			I32 prevCount = query->cache.GetTableCount();
+			query->cache.SetTableCacheState(table, isEmpty);
+			I32 curCount = query->cache.GetTableCount();
+			
+			// The count of matching table is changed, need to update the tableList
+			if (prevCount != curCount)
+			{
+				QueryTableCache* qt = (QueryTableCache*)query->cache.GetTableCache(table);
+				ECS_ASSERT(qt != nullptr);
+
+				QueryTableMatch* cur, *next;
+				for (cur = qt->data.first; cur != nullptr; cur = next)
+				{
+					next = cur->next->Cast();
+				
+					if (isEmpty)
+						QueryRemoveTableMatchNode(query, cur);
+					else
+						QueryInsertTableMatchNode(query, cur);
+				}
+			}
+		}
+
+		QueryTableMatch* QueryCreateTableMatchNode(QueryTableCache* cache)
 		{
 			QueryTableMatch* tableMatch = ECS_CALLOC_T(QueryTableMatch);
+
 			ECS_ASSERT(tableMatch);
 			if (cache->data.first == nullptr)
 			{
@@ -1317,7 +1503,7 @@ namespace ECS
 			if (insertPoint == nullptr)
 			{
 				// No insertion point, just insert into the orderdTableList
-				QueryTableMatchList& list = query->matchList;
+				QueryTableMatchList& list = query->tableList;
 				if (list.first)
 				{
 					node->next = list.first;
@@ -1339,7 +1525,7 @@ namespace ECS
 				if (next)
 					next->prev = node;
 				else 
-					query->matchList.last = node;
+					query->tableList.last = node;
 			}
 		}
 
@@ -1383,7 +1569,7 @@ namespace ECS
 			if (groupByID)
 				list = &query->groups[node->groupID];
 			else
-				list = &query->matchList;
+				list = &query->tableList;
 
 			// Insert into list
 			if (list->last)
@@ -1401,8 +1587,8 @@ namespace ECS
 				if (groupByID)
 				{
 					// If group by id, is need to update the default match list
-					if (query->matchList.last == last)
-						query->matchList.last = node;
+					if (query->tableList.last == last)
+						query->tableList.last = node;
 				}
 			}
 			else
@@ -1419,7 +1605,7 @@ namespace ECS
 			}
 
 			if (groupByID)
-				query->matchList.count++;
+				query->tableList.count++;
 
 			list->count++;
 			query->matchingCount++;
@@ -1434,7 +1620,7 @@ namespace ECS
 			if (next)
 				next->prev = prev;
 
-			QueryTableMatchList& list = query->matchList;
+			QueryTableMatchList& list = query->tableList;
 			ECS_ASSERT(list.count > 0);
 			list.count--;
 
@@ -1453,7 +1639,7 @@ namespace ECS
 		{
 			U32 termCount = query->filter.termCount;
 
-			QueryTableMatch* qm = QueryAddTableMatchCache(qt);
+			QueryTableMatch* qm = QueryCreateTableMatchNode(qt);
 			ECS_ASSERT(qm);
 			qm->table = table;
 			qm->termCount = termCount;
@@ -1582,6 +1768,13 @@ namespace ECS
 			if (query == nullptr)
 				return;
 
+			// Delete the observer
+			if (!isFini)
+			{
+				if (query->observer != INVALID_ENTITY)
+					DeleteEntity(query->observer);
+			}
+
 			// TODO: reinterpret_cast 
 			// Free query table cache 
 			QueryTableCache* cache = nullptr;
@@ -1616,13 +1809,13 @@ namespace ECS
 
 			QueryIterator queryIt = {};
 			queryIt.query = query;
-			queryIt.node = (QueryTableMatch*)query->matchList.first;
+			queryIt.node = (QueryTableMatch*)query->tableList.first;
 
 			Iterator iter = {};
 			iter.world = this;
 			iter.terms = query->filter.terms;
 			iter.termCount = query->filter.termCount;
-			iter.tableCount = query->cache.tables.count;
+			iter.tableCount = query->cache.GetTableCount();
 			iter.priv.iter.query = queryIt;
 			iter.next = NextQueryIter;
 
@@ -1778,11 +1971,11 @@ namespace ECS
 		bool FreeComponentRecord(ComponentRecord* record)
 		{
 			// There are still tables in non-empty list
-			if (record->cache.tables.count > 0)
+			if (record->cache.GetTableCount() > 0)
 				return false;
 
 			// No more tables in this record, free it
-			if (record->cache.emptyTables.count == 0)
+			if (record->cache.GetEmptyTableCount() == 0)
 			{
 				ECS_DELETE_OBJECT(record);
 				return true;
@@ -1924,6 +2117,41 @@ namespace ECS
 			return true;
 		}
 
+		bool IsCompIDTag(EntityID id)
+		{
+			if (CheckIDHasPropertyNone(id))
+			{
+				if (ECS_HAS_ROLE(id, EcsRolePair))
+				{
+					if (ECS_GET_PAIR_FIRST(id) != EcsPropertyNone)
+					{
+						EntityID rel = ECS_GET_PAIR_FIRST(id);
+						if (IsEntityValid(rel))
+						{
+							if (HasComponent(rel, EcsPropertyTag))
+								return true;
+						}
+						else
+						{
+							ComponentTypeInfo* info = GetComponentTypeInfo(id);
+							if (info != nullptr)
+								return info->compID == INVALID_ENTITY;
+							return true;
+						}
+					}
+				}
+			}
+			else
+			{
+				ComponentTypeInfo* info = GetComponentTypeInfo(id);
+				if (info != nullptr)
+					return info->compID == INVALID_ENTITY;
+				return true;
+			}
+
+			return false;
+		}
+
 		// Get a single real type id
 		EntityID GetRealTypeID(EntityID compID)
 		{
@@ -2013,11 +2241,13 @@ namespace ECS
 			typeInfo->alignment = alignof(C);
 		}
 
-		void SetupComponentIDs()
+		void SetupComponentTypes()
 		{
 			InitBuiltinComponentTypeInfo<InfoComponent>(ECS_ENTITY_ID(InfoComponent));
 			InitBuiltinComponentTypeInfo<NameComponent>(ECS_ENTITY_ID(NameComponent));
 			InitBuiltinComponentTypeInfo<SystemComponent>(ECS_ENTITY_ID(SystemComponent));
+			InitBuiltinComponentTypeInfo<TriggerComponent>(ECS_ENTITY_ID(TriggerComponent));
+			InitBuiltinComponentTypeInfo<ObserverComponent>(ECS_ENTITY_ID(ObserverComponent));
 
 			// Info component
 			Reflect::ReflectInfo info = {};
@@ -2030,6 +2260,18 @@ namespace ECS
 			info.copy = Reflect::Copy<NameComponent>();
 			info.move = Reflect::Move<NameComponent>();
 			SetComponentTypeInfo(ECS_ENTITY_ID(NameComponent), info);
+
+			// Trigger component
+			info = {};
+			info.ctor = DefaultCtor;
+			info.dtor = BuiltinCompDtor(TriggerComponent);
+			SetComponentTypeInfo(ECS_ENTITY_ID(TriggerComponent), info);
+
+			// Observer component
+			info = {};
+			info.ctor = DefaultCtor;
+			info.dtor = BuiltinCompDtor(ObserverComponent);
+			SetComponentTypeInfo(ECS_ENTITY_ID(ObserverComponent), info);
 		}
 
 		void InitBuiltinComponents()
@@ -2071,15 +2313,15 @@ namespace ECS
 
 			InitBuiltinComponent(ECS_ENTITY_ID(InfoComponent), sizeof(InfoComponent), alignof(InfoComponent), Util::Typename<InfoComponent>());
 			InitBuiltinComponent(ECS_ENTITY_ID(NameComponent), sizeof(NameComponent), alignof(NameComponent), Util::Typename<NameComponent>());
+			InitBuiltinComponent(ECS_ENTITY_ID(TriggerComponent), sizeof(TriggerComponent), alignof(TriggerComponent), Util::Typename<TriggerComponent>());
+			InitBuiltinComponent(ECS_ENTITY_ID(ObserverComponent), sizeof(ObserverComponent), alignof(ObserverComponent), Util::Typename<ObserverComponent>());
+
 
 			lastComponentID = FirstUserComponentID;
 			lastID = FirstUserEntityID;
-
-			//ComponentTypeRegister<InfoComponent>::RegisterComponent(*this);
-			//ComponentTypeRegister<NameComponent>::RegisterComponent(*this);
 		}
 
-		void InitBuiltinTags()
+		void InitBuiltinEntites()
 		{
 			InfoComponent tagInfo = {};
 			tagInfo.size = 0;
@@ -2103,6 +2345,9 @@ namespace ECS
 			// Relation
 			InitTag(EcsRelationIsA, "EcsRelationIsA");
 			InitTag(EcsRelationChildOf, "EcsRelationChildOf");
+			// Events
+			InitTag(EcsEventTableEmpty, "EcsEventTableEmpty");
+			InitTag(EcsEventTableFill, "EcsEventTableFill");
 
 			// RelationIsA has peropty of tag
 			AddComponent(EcsRelationIsA, EcsPropertyTag);
@@ -2181,8 +2426,6 @@ namespace ECS
 
 		void* GetOrCreateMutableByID(EntityID entity, EntityID compID, bool* added)
 		{
-			
-
 			EntityInfo* info = entityPool.Ensure(entity);
 			void* ret = GetOrCreateMutable(entity, compID, info, added);
 			ECS_ASSERT(ret != nullptr);
@@ -2583,7 +2826,7 @@ namespace ECS
 
 		void SetTableEmpty(EntityTable* table)
 		{
-			EntityTable** tablePtr = pendingTables.Ensure(table->tableID);
+			EntityTable** tablePtr = pendingTables->Ensure(table->tableID);
 			ECS_ASSERT(tablePtr != nullptr);
 			(*tablePtr) = table;
 		}
@@ -2756,19 +2999,58 @@ namespace ECS
 
 		void FlushPendingTables()
 		{
-			if (pendingTables.Count() == 0)
+			if (isReadonly)
+			{
+				ECS_ASSERT(pendingTables->Count() == 0);
+				return;
+			}
+
+			// Pending table is iterating when pending buffer is null.
+			if (pendingBuffer == nullptr)
 				return;
 
-			for (size_t i = 0; i < pendingTables.Count(); i++)
-			{
-				EntityTable* table = *pendingTables.GetByDense(i);
-				if (table == nullptr || table->tableID == 0)
-					continue;
+			size_t pendingCount = pendingTables->Count();
+			if (pendingCount == 0)
+				return;
 
-				// Flush state of pending table
-				ForEachEntityID(this, table, FlushTableState);
-			}
-			pendingTables.Clear();	// TODO
+			// Check whether the status (Emtpy/NonEmtpy) of the table cache has changed
+			auto NeedUpdateTable = [&](EntityTable* table)->bool {
+				bool ret = false;
+				bool isEmpty = table->Count() == 0;
+				for (int i = 0; i < table->tableRecords.size(); i++)
+				{
+					TableComponentRecord& record = table->tableRecords[i];
+					ret |= record.tableCache->SetTableCacheState(table, isEmpty);
+				}
+				return ret;
+			};
+			do
+			{
+				Util::SparseArray<EntityTable*>* tables = pendingTables;	
+				pendingTables = pendingBuffer;
+				pendingBuffer = nullptr;
+
+				for (size_t i = 0; i < pendingCount; i++)
+				{
+					EntityTable* table = *tables->GetByDense(i);
+					if (table == nullptr || table->tableID == 0)
+						continue;
+
+					if (NeedUpdateTable(table))
+					{
+						EventDesc desc = {};
+						desc.event = table->Count() > 0 ? EcsEventTableFill : EcsEventTableEmpty;
+						desc.ids = table->type;
+						desc.observable = &observable;
+						desc.table = table;
+						EmitEvent(desc);
+					}
+				}
+
+				tables->Clear();
+				pendingBuffer = tables;
+
+			} while (pendingCount = pendingTables->Count());
 		}
 
 		void ComputeTableDiff(EntityTable* t1, EntityTable* t2, TableGraphEdge* edge, EntityID compID)
@@ -3095,6 +3377,295 @@ namespace ECS
 				FreeTableGraphEdge(edge);
 			else
 				edge->from = nullptr;
+		}
+
+		////////////////////////////////////////////////////////////////////////////////
+		//// Trigger
+		////////////////////////////////////////////////////////////////////////////////
+
+		const Map<EventRecord>* GetTriggers(Observable* observable, EntityID event)
+		{
+			EventRecords* records = observable->events.Get(event);
+			if (records != nullptr)
+				return &records->eventIds;
+			return nullptr;
+		}
+
+		void NotifyTriggers(Iterator& it, const Map<Trigger*>* triggers)
+		{
+			ECS_ASSERT(triggers != nullptr);
+
+			auto IsTriggerValid = [&](const Trigger& trigger, EntityTable* table) {
+				if (trigger.eventID && *trigger.eventID == eventID)
+					return false;
+
+				if (table == nullptr)
+					return false;
+
+				if (table->flags & TableFlagIsPrefab)
+					return false;
+
+				return true;
+			};
+
+			for (const auto& kvp : *triggers)
+			{
+				Trigger* trigger = (Trigger*)(kvp.second);
+				if (!IsTriggerValid(*trigger, it.table))
+					continue;
+
+				it.terms = &trigger->term;
+				it.ctx = trigger->ctx;
+				trigger->callback(&it);
+			}
+		}
+
+		void NotifyTriggersForID(Iterator& it, const Map<EventRecord>* eventMap, EntityID id)
+		{
+			auto kvp = eventMap->find(id);
+			if (kvp == eventMap->end())
+				return;
+
+			const EventRecord& record = kvp->second;
+			if (record.triggers.size() > 0)
+				NotifyTriggers(it, &record.triggers);
+		}
+
+		void RegisterTriggerForID(Observable& observable, Trigger* trigger, EntityID id)
+		{
+			// EventID -> EventRecords -> CompID -> EventRecord -> TriggerID
+			ECS_ASSERT(trigger != nullptr);
+
+			for (int i = 0; i < trigger->eventCount; i++)
+			{
+				EntityID event = trigger->events[i];
+				ECS_ASSERT(event != INVALID_ENTITY);
+
+				EventRecords* records = observable.events.Ensure(event);
+				EventRecord& record = records->eventIds[id];
+				record.triggers[trigger->id] = trigger;
+				record.triggerCount++;
+			}
+		}
+
+		void RegisterTrigger(Observable& observable, Trigger* trigger)
+		{
+			Term& term = trigger->term;
+			RegisterTriggerForID(observable, trigger, term.compID);
+		}
+
+		void UnregisterTriggerForID(Observable& observable, Trigger* trigger, EntityID id)
+		{
+			// EventID -> EventRecords -> CompID -> EventRecord -> TriggerID
+			ECS_ASSERT(trigger != nullptr);
+
+			for (int i = 0; i < trigger->eventCount; i++)
+			{
+				EntityID event = trigger->events[i];
+				ECS_ASSERT(event != INVALID_ENTITY);
+
+				EventRecords* records = observable.events.Get(event);
+				if (records == nullptr)
+					continue;
+
+				auto it = records->eventIds.find(id);
+				if (it == records->eventIds.end())
+					continue;
+
+				EventRecord& record = it->second;
+				if (record.triggers.find(trigger->id) != record.triggers.end())
+				{
+					record.triggers.erase(trigger->id);
+					record.triggerCount--;
+				}
+			}
+		}
+
+		void UnregisterTrigger(Observable& observable, Trigger* trigger)
+		{
+			Term& term = trigger->term;
+			UnregisterTriggerForID(observable, trigger, term.compID);
+		}
+
+		EntityID CreateTrigger(const TriggerDesc& desc)
+		{
+			ECS_ASSERT(isFini == false);
+			ECS_ASSERT(desc.callback != nullptr);
+
+			Observable* observable = desc.observable;
+			if (observable == nullptr)
+				observable = &this->observable;
+
+			EntityID ret = CreateEntityID(nullptr);
+			bool newAdded = false;
+			TriggerComponent* comp = static_cast<TriggerComponent*>(GetOrCreateMutableByID(ret, ECS_ENTITY_ID(TriggerComponent), &newAdded));
+			if (newAdded)
+			{				
+				Term term = desc.term;
+				if (!FinalizeTerm(term))
+					goto error;
+
+				Trigger* trigger = triggers.Requset();
+				ECS_ASSERT(trigger != nullptr);
+				trigger->id = triggers.GetLastID();
+				comp->trigger = trigger;
+
+				trigger->entity = ret;
+				trigger->term = term;
+				trigger->callback = desc.callback;	
+				trigger->ctx = desc.ctx;
+				memcpy(trigger->events, desc.events, sizeof(EntityID) * desc.eventCount);
+				trigger->eventCount = desc.eventCount;
+				trigger->eventID = desc.eventID;
+				trigger->observable = observable;
+			
+				RegisterTrigger(*observable, trigger);
+			}
+			return ret;
+		error:
+			if (ret != INVALID_ENTITY)
+				DeleteEntity(ret);
+			return INVALID_ENTITY;
+		}
+
+		void FiniTrigger(Trigger* trigger)
+		{
+			UnregisterTrigger(*trigger->observable, trigger);
+			triggers.Remove(trigger->id);
+		}
+
+		////////////////////////////////////////////////////////////////////////////////
+		//// Observer
+		////////////////////////////////////////////////////////////////////////////////
+
+		static void ObserverTriggerCallback(Iterator* it) 
+		{
+			Observer* observer = (Observer*)it->ctx;
+			if (observer->callback)
+				observer->callback(it);
+		}
+
+		EntityID CreateObserver(const ObserverDesc& desc)
+		{
+			ECS_ASSERT(isFini == false);
+			ECS_ASSERT(desc.callback != nullptr);
+
+			// ObserverComp => Observer => Trigger for each term
+
+			EntityID ret = CreateEntityID(nullptr);
+			bool newAdded = false;
+			ObserverComponent* comp = static_cast<ObserverComponent*>(GetOrCreateMutableByID(ret, ECS_ENTITY_ID(ObserverComponent), &newAdded));
+			if (newAdded)
+			{
+				Observer* observer = observers.Requset();
+				ECS_ASSERT(observer != nullptr);
+				observer->id = observers.GetLastID();
+				comp->observer = observer;
+
+				for (int i = 0; i < ECS_TRIGGER_MAX_EVENT_COUNT; i++)
+				{
+					if (desc.events[i] == INVALID_ENTITY)
+						continue;
+
+					observer->events[observer->eventCount] = desc.events[i];
+					observer->eventCount++;
+				}
+
+				ECS_ASSERT(observer->eventCount > 0);
+
+				observer->callback = desc.callback;
+				observer->ctx = desc.ctx;
+
+				// Init the filter of observer
+				if (!InitFilter(desc.filterDesc, observer->filter))
+				{
+					FiniObserver(observer);
+					return INVALID_ENTITY;
+				}
+
+				// Create a trigger for each term
+				TriggerDesc triggerDesc = {};
+				triggerDesc.callback = ObserverTriggerCallback;
+				triggerDesc.ctx = observer;
+				triggerDesc.eventID = &observer->eventID;
+				memcpy(triggerDesc.events, observer->events, sizeof(EntityID) * observer->eventCount);
+				triggerDesc.eventCount = observer->eventCount;
+
+				const Filter& filter = observer->filter;
+				for (int i = 0; i < filter.termCount; i++)
+				{
+					triggerDesc.term = filter.terms[i];
+					/*if (IsCompIDTag(triggerDesc.term.compID))
+						ECS_ASSERT(false);*/
+
+					EntityID trigger = CreateTrigger(triggerDesc);
+					if (trigger == INVALID_ENTITY)
+						goto error;
+
+					observer->triggers.push_back(trigger);
+				}
+			}
+			return ret;
+
+		error:
+			if (ret != INVALID_ENTITY)
+				DeleteEntity(ret);
+			return INVALID_ENTITY;
+		}
+
+		void FiniObserver(Observer* observer)
+		{
+			for (auto trigger : observer->triggers)
+			{
+				if (trigger != INVALID_ENTITY)
+					DeleteEntity(trigger);
+			}
+			observer->triggers.clear();
+
+			FiniFilter(observer->filter);
+
+			observers.Remove(observer->id);
+		}
+
+		////////////////////////////////////////////////////////////////////////////////
+		//// Events
+		////////////////////////////////////////////////////////////////////////////////
+
+		void NotifyEvents(Observable* observable, Iterator& it, const EntityType& ids, EntityID event)
+		{
+			ECS_ASSERT(event != INVALID_ENTITY);
+			ECS_ASSERT(!ids.empty());
+
+			const Map<EventRecord>* eventMap = GetTriggers(observable, event);
+			if (eventMap == nullptr)
+				return;
+
+			for (int i = 0; i < ids.size(); i++)
+			{
+				EntityID id = ids[i];
+				NotifyTriggersForID(it, eventMap, id);
+			}
+		}
+
+		void EmitEvent(const EventDesc& desc)
+		{
+			ECS_ASSERT(desc.event != INVALID_ENTITY);
+			ECS_ASSERT(!desc.ids.empty());
+			ECS_ASSERT(desc.table != nullptr);
+
+			Iterator it = {};
+			it.world = this;
+			it.table = desc.table;
+			it.termCount = 1;
+			it.count = desc.table->Count();
+			it.event = desc.event;
+
+			// Inc unique event id
+			eventID++;
+
+			Observable* observable = desc.observable;
+			ECS_ASSERT(observable != nullptr);
+			NotifyEvents(observable, it, desc.ids, desc.event);
 		}
 	};
 	
@@ -3672,18 +4243,26 @@ namespace ECS
 		return node;
 	}
 
-	void EntityTableCacheBase::SetTableCacheState(EntityTable* table, bool isEmpty)
+	EntityTableCacheItem* EntityTableCacheBase::GetTableCache(EntityTable* table)
 	{
 		auto it = tableRecordMap.find(table->tableID);
 		if (it == tableRecordMap.end())
-			return;
+			return nullptr;
+		return it->second;
+	}
+
+	bool EntityTableCacheBase::SetTableCacheState(EntityTable* table, bool isEmpty)
+	{
+		auto it = tableRecordMap.find(table->tableID);
+		if (it == tableRecordMap.end())
+			return false;
 
 		EntityTableCacheItem* node = it->second;
 		if (node == nullptr)
-			return;
+			return false;
 
 		if (node->empty == isEmpty)
-			return;
+			return false;
 
 		node->empty = isEmpty;
 
@@ -3697,6 +4276,7 @@ namespace ECS
 			ListRemoveNode(node, true);
 			ListInsertNode(node, false);
 		}
+		return true;
 	}
 
 	// Get size for target comp id
@@ -3861,6 +4441,7 @@ namespace ECS
 				{
 					if (targetTable != nullptr)
 					{
+						// If it->table equal target table, match failed
 						if (targetTable == it->table)
 							goto done;
 
@@ -3890,7 +4471,7 @@ namespace ECS
 					match = FilterMatchTable(world, table, *it, pivotTerm, it->ids, it->columns);
 					if (match == false)
 					{
-						it->table = nullptr;
+						it->table = table;
 						iter.matchesLeft = 0;
 						continue;
 					}
@@ -4010,33 +4591,34 @@ namespace ECS
 		return QueryNextInstanced(it);
 	}
 
-	////////////////////////////////////////////////////////////////////////////////
-	//// Static function impl
-	////////////////////////////////////////////////////////////////////////////////
-
-	bool FlushTableState(WorldImpl* world, EntityTable* table, EntityID id, I32 column)
-	{
-		ComponentRecord* compRecord = world->GetComponentRecord(id);
-		if (compRecord == nullptr)
-			return false;
-
-		compRecord->cache.SetTableCacheState(table, table->Count() == 0);
-		return true;
-	}
-
-	bool ForEachEntityID(WorldImpl* world, EntityTable* table, EntityIDAction action)
-	{
-		bool ret = false;
-		for (U32 i = 0; i < table->type.size(); i++)
-		{
-			EntityID id = table->type[i];
-			ret |= action(world, table, StripGeneration(id), i);
-		}
-		return ret;
-	}
-
 	ECS_UNIQUE_PTR<World> World::Create()
 	{
 		return ECS_MAKE_UNIQUE<WorldImpl>();
+	}
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Builtin components
+	////////////////////////////////////////////////////////////////////////////////
+
+	static void BuiltinCompDtor(TriggerComponent)(World* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	{
+		WorldImpl* impl = static_cast<WorldImpl*>(world);
+		TriggerComponent* comps = static_cast<TriggerComponent*>(ptr);
+		for (int i = 0; i < count; i++)
+		{
+			if (comps[i].trigger != nullptr)
+				impl->FiniTrigger(comps[i].trigger);
+		}
+	}
+
+	static void BuiltinCompDtor(ObserverComponent)(World* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	{
+		WorldImpl* impl = static_cast<WorldImpl*>(world);
+		ObserverComponent* comps = static_cast<ObserverComponent*>(ptr);
+		for (int i = 0; i < count; i++)
+		{
+			if (comps[i].observer != nullptr)
+				impl->FiniObserver(comps[i].observer);
+		}
 	}
 }

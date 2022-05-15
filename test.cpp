@@ -159,6 +159,7 @@ TEST_CASE("Query", "ECS")
     U32 aTimes = 0;
     U32 bTimes = 0;
     std::unique_ptr<ECS::World> world = ECS::World::Create();
+    auto query = world->CreateQuery<PositionComponent, VelocityComponent>().Build();
     for (int i = 0; i < 5; i++)
     {
         world->CreateEntity((std::string("A") + std::to_string(i)).c_str())
@@ -166,7 +167,6 @@ TEST_CASE("Query", "ECS")
             .With<VelocityComponent>();
     }
 
-    auto query = world->CreateQuery<PositionComponent, VelocityComponent>().Build();
     query.ForEach([&](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
         aTimes++;
     });
@@ -205,6 +205,15 @@ TEST_CASE("ChildOf", "ECS")
     ECS::EntityID target = world->GetParent(child);
     CHECK(target == parent);
 
+    // Query
+    auto query = world->CreateQuery<Position, Position, Position>()
+        .TermIndex(0).Obj<Local>()
+        .TermIndex(1).Obj<Global>()
+        .TermIndex(2).Obj<Global>()
+        .TermIndex(2)
+        .Set(ECS::TermFlagParent | ECS::TermFlagCascade)
+        .Build();
+
     std::vector<ECS::EntityID> queue;
     auto e1 = world->CreateEntity("e1")
         .With<Position, Local>({ 1.0f, 1.0f })
@@ -226,14 +235,6 @@ TEST_CASE("ChildOf", "ECS")
         .With<Position, Global>({ 44.0f, 44.0f })
         .With<Health>();
 
-    // Query
-    auto query = world->CreateQuery<Position, Position, Position>()
-        .TermIndex(0).Obj<Local>()
-        .TermIndex(1).Obj<Global>()
-        .TermIndex(2).Obj<Global>()
-        .TermIndex(2)
-        .Set(ECS::TermFlagParent | ECS::TermFlagCascade)
-        .Build();
     query.ForEach([&](ECS::EntityID entity, Position& p1, Position& p2, Position& pOut) {
         queue.push_back(entity);
     });
