@@ -76,6 +76,8 @@ namespace ECS
 	// Events
 	const EntityID EcsEventTableEmpty = BUILTIN_ENTITY_ID;
 	const EntityID EcsEventTableFill = BUILTIN_ENTITY_ID;
+	const EntityID EcsEventOnAdd = BUILTIN_ENTITY_ID;
+	const EntityID EcsEventOnRemove = BUILTIN_ENTITY_ID;
 	// Relations
 	const EntityID EcsRelationIsA = BUILTIN_ENTITY_ID;
 	const EntityID EcsRelationChildOf = BUILTIN_ENTITY_ID;
@@ -551,6 +553,9 @@ namespace ECS
 			// Fini component records
 			FiniComponentRecords();
 
+			// Fini component type infos
+			FiniComponentTypeInfos();
+
 			// Clear entity pool
 			entityPool.Clear();
 
@@ -789,8 +794,16 @@ namespace ECS
 			return compTypePool.Get(compID);
 		}
 
+		const ComponentTypeHooks* GetComponentTypeHooks(EntityID compID)const override
+		{
+			auto typeInfo = GetComponentTypeInfo(compID);
+			if (typeInfo != nullptr)
+				return &typeInfo->hooks;
+			return nullptr;
+		}
+
 		// Set component type info for component id
-		void SetComponentTypeInfo(EntityID compID, const Reflect::ReflectInfo& info) override
+		void SetComponentTypeInfo(EntityID compID, const ComponentTypeHooks& info) override
 		{
 			ComponentTypeInfo* compTypeInfo = compTypePool.Ensure(compID);
 			size_t size = compTypeInfo->size;
@@ -805,23 +818,14 @@ namespace ECS
 				}
 			}
 
-			if (compTypeInfo->isSet)
-			{
-				ECS_ASSERT(compTypeInfo->reflectInfo.ctor != nullptr);
-				ECS_ASSERT(compTypeInfo->reflectInfo.dtor != nullptr);
-			}
-			else
-			{
-				compTypeInfo->compID = compID;
-				compTypeInfo->size = size;
-				compTypeInfo->alignment = alignment;
-				compTypeInfo->isSet = true;
-				compTypeInfo->reflectInfo = info;
-				
-				// Set default constructor
-				if (!info.ctor && (info.dtor || info.copy || info.move))
-					compTypeInfo->reflectInfo.ctor = DefaultCtor;
-			}
+			compTypeInfo->compID = compID;
+			compTypeInfo->size = size;
+			compTypeInfo->alignment = alignment;
+			compTypeInfo->hooks = info;
+
+			// Set default constructor
+			if (!info.ctor && (info.dtor || info.copy || info.move))
+				compTypeInfo->hooks.ctor = DefaultCtor;
 		}
 
 		EntityID InitNewComponent(const ComponentCreateDesc& desc) override
@@ -2018,6 +2022,24 @@ namespace ECS
 			compRecordMap.clear();
 		}
 
+		void FiniComponentTypeInfo(ComponentTypeInfo* typeinfo)
+		{
+			ComponentTypeHooks& hooks = typeinfo->hooks;
+			if (hooks.invoker != nullptr && hooks.invokerDeleter != nullptr)
+				hooks.invokerDeleter(hooks.invoker);
+		}
+
+		void FiniComponentTypeInfos()
+		{
+			size_t count = compTypePool.Count();
+			for (size_t i = 0; i < count; i++)
+			{
+				ComponentTypeInfo* typeinfo = compTypePool.GetByDense(i);
+				if (typeinfo != nullptr)
+					FiniComponentTypeInfo(typeinfo);
+			}
+		}
+
 		bool CheckEntityTypeHasComponent(EntityType& entityType, EntityID compID)
 		{
 			for (auto& id : entityType)
@@ -2250,7 +2272,7 @@ namespace ECS
 			InitBuiltinComponentTypeInfo<ObserverComponent>(ECS_ENTITY_ID(ObserverComponent));
 
 			// Info component
-			Reflect::ReflectInfo info = {};
+			ComponentTypeHooks info = {};
 			info.ctor = DefaultCtor;
 			SetComponentTypeInfo(ECS_ENTITY_ID(InfoComponent), info);
 
@@ -2348,6 +2370,9 @@ namespace ECS
 			// Events
 			InitTag(EcsEventTableEmpty, "EcsEventTableEmpty");
 			InitTag(EcsEventTableFill, "EcsEventTableFill");
+			InitTag(EcsEventOnAdd, "EcsEventOnAdd");
+			InitTag(EcsEventOnRemove, "EcsEventOnRemove");
+			
 
 			// RelationIsA has peropty of tag
 			AddComponent(EcsRelationIsA, EcsPropertyTag);
@@ -2366,7 +2391,7 @@ namespace ECS
 			ECS_ENTITY_ID(SystemComponent) = InitNewComponent(desc);
 
 			// Set system component action
-			Reflect::ReflectInfo info = {};
+			ComponentTypeHooks info = {};
 			info.ctor = DefaultCtor;
 			info.dtor = [](World* world, EntityID* entities, size_t size, size_t count, void* ptr) {
 				WorldImpl* worldImpl = static_cast<WorldImpl*>(world);
@@ -2479,15 +2504,15 @@ namespace ECS
 				{
 					if (isMove)
 					{
-						if (compTypeInfo->reflectInfo.move != nullptr)
-							compTypeInfo->reflectInfo.move(this, &entity, &entity, compTypeInfo->size, 1, (void*)ptr, dst);
+						if (compTypeInfo->hooks.move != nullptr)
+							compTypeInfo->hooks.move(this, &entity, &entity, compTypeInfo->size, 1, (void*)ptr, dst);
 						else
 							memcpy(dst, ptr, size);
 					}
 					else
 					{
-						if (compTypeInfo->reflectInfo.copy != nullptr)
-							compTypeInfo->reflectInfo.copy(this, &entity, &entity, compTypeInfo->size, 1, ptr, dst);
+						if (compTypeInfo->hooks.copy != nullptr)
+							compTypeInfo->hooks.copy(this, &entity, &entity, compTypeInfo->size, 1, ptr, dst);
 						else
 							memcpy(dst, ptr, size);
 					}
@@ -2515,10 +2540,10 @@ namespace ECS
 		{
 			ECS_ASSERT(columnData != nullptr);
 
-			if (typeInfo != nullptr && typeInfo->reflectInfo.ctor != nullptr)
+			if (typeInfo != nullptr && typeInfo->hooks.ctor != nullptr)
 			{
 				void* mem = columnData->Get(typeInfo->size, typeInfo->alignment, row);
-				typeInfo->reflectInfo.ctor(this, entities, typeInfo->size, count, mem);
+				typeInfo->hooks.ctor(this, entities, typeInfo->size, count, mem);
 			}
 		}
 
@@ -2526,11 +2551,52 @@ namespace ECS
 		{
 			ECS_ASSERT(columnData != nullptr);
 
-			if (typeInfo == nullptr || typeInfo->reflectInfo.dtor != nullptr)
+			if (typeInfo != nullptr && typeInfo->hooks.dtor != nullptr)
 			{
 				void* mem = columnData->Get(typeInfo->size, typeInfo->alignment, row);
-				typeInfo->reflectInfo.dtor(this, entities, typeInfo->size, count, mem);
+				typeInfo->hooks.dtor(this, entities, typeInfo->size, count, mem);
 			}
+		}
+
+		void AddNewComponent(EntityTable* table, ComponentTypeInfo* typeInfo, ComponentColumnData* columnData, EntityID* entities, EntityID compID, I32 row, I32 count)
+		{
+			ECS_ASSERT(typeInfo != nullptr);
+
+			CtorComponent(typeInfo, columnData, entities, compID, row, count);
+
+			auto onAdd = typeInfo->hooks.onAdd;
+			if (onAdd != nullptr)
+				OnComponentCallback(table, typeInfo, onAdd, columnData, entities, compID, row, count);
+		}
+
+		void RemoveComponent(EntityTable* table, ComponentTypeInfo* typeInfo, ComponentColumnData* columnData, EntityID* entities, EntityID compID, I32 row, I32 count)
+		{
+			ECS_ASSERT(typeInfo != nullptr);
+
+			auto onRemove = typeInfo->hooks.onRemove;
+			if (onRemove != nullptr)
+				OnComponentCallback(table, typeInfo, onRemove, columnData, entities, compID, row, count);
+		
+			DtorComponent(typeInfo, columnData, entities, compID, row, count);
+		}
+
+		void OnComponentCallback(EntityTable* table, ComponentTypeInfo* typeInfo, IterCallbackAction callback, ComponentColumnData* columnData, EntityID* entities, EntityID compID, I32 row, I32 count)
+		{
+			Iterator it = {};
+			it.termCount = 1;
+			it.entities = entities;
+
+			// term count < ECS_TERM_CACHE_SIZE
+			InitIterator(it, ITERATOR_CACHE_MASK_ALL);
+			it.world = this;
+			it.table = table;
+			it.ptrs[0] = columnData->Get(typeInfo->size, typeInfo->alignment, row);
+			it.sizes[0] = typeInfo->size;
+			it.ids[0] = compID;
+			it.count = count;
+			it.invoker = typeInfo->hooks.invoker;
+			ValidateInteratorCache(it);
+			callback(&it);
 		}
 
 		////////////////////////////////////////////////////////////////////////////////
@@ -2923,8 +2989,8 @@ namespace ECS
 					if (sameEntity)
 					{
 						// Do move-ctor-dtor if same entity
-						auto moveCtor = typeInfo.reflectInfo.moveCtor;
-						auto dtor = typeInfo.reflectInfo.dtor;
+						auto moveCtor = typeInfo.hooks.moveCtor;
+						auto dtor = typeInfo.hooks.dtor;
 						if (moveCtor != nullptr && dtor != nullptr)
 						{
 							moveCtor(this, &srcEntity, &srcEntity, typeInfo.size, 1, srcMem, dstMem);
@@ -2938,8 +3004,8 @@ namespace ECS
 					else
 					{
 						// Do copy-ctor
-						if (typeInfo.reflectInfo.copyCtor != nullptr)
-							typeInfo.reflectInfo.copyCtor(this, &srcEntity, &dstEntity, typeInfo.size, 1, srcMem, dstMem);
+						if (typeInfo.hooks.copyCtor != nullptr)
+							typeInfo.hooks.copyCtor(this, &srcEntity, &dstEntity, typeInfo.size, 1, srcMem, dstMem);
 						else
 							memcpy(dstMem, srcMem, typeInfo.size);
 					}
@@ -2949,17 +3015,21 @@ namespace ECS
 					if (dstComponentID < srcComponentID)
 					{
 						if (construct)
-							CtorComponent(
+						{
+							AddNewComponent(
+								dstTable,
 								&dstTable->compTypeInfos[dstColumnIndex],
 								&dstTable->storageColumns[dstColumnIndex],
 								&dstEntity,
 								dstComponentID,
 								dstRow,
 								1);
+						}
 					}
 					else
 					{
-						DtorComponent(
+						RemoveComponent(
+							srcTable,
 							&srcTable->compTypeInfos[srcColumnIndex], 
 							&srcTable->storageColumns[srcColumnIndex],
 							&srcEntity,
@@ -2977,7 +3047,8 @@ namespace ECS
 			if (construct)
 			{
 				for (; dstColumnIndex < dstNumColumns; dstColumnIndex++)
-					CtorComponent(
+					AddNewComponent(
+						dstTable,
 						&dstTable->compTypeInfos[dstColumnIndex],
 						&dstTable->storageColumns[dstColumnIndex],
 						&dstEntity,
@@ -2988,7 +3059,8 @@ namespace ECS
 
 			// Destruct remainning columns
 			for (; srcColumnIndex < srcNumColumns; srcColumnIndex++)
-				DtorComponent(
+				RemoveComponent(
+					srcTable,
 					&srcTable->compTypeInfos[srcColumnIndex],
 					&srcTable->storageColumns[srcColumnIndex],
 					&srcEntity,
@@ -3864,7 +3936,8 @@ namespace ECS
 			{
 				for (int i = 0; i < storageCount; i++)
 				{
-					world->DtorComponent(
+					world->RemoveComponent(
+						this,
 						&compTypeInfos[i],
 						&storageColumns[i],
 						&entityToDelete,
@@ -3887,10 +3960,14 @@ namespace ECS
 					void* srcMem = columnData.Get(typeInfo.size, typeInfo.alignment, count);
 					void* dstMem = columnData.Get(typeInfo.size, typeInfo.alignment, index);
 
-					if (typeInfo.reflectInfo.move != nullptr && typeInfo.reflectInfo.dtor != nullptr)
+					auto onRemove = typeInfo.hooks.onRemove;
+					if (onRemove != nullptr)
+						world->OnComponentCallback(this, &typeInfo, onRemove, &columnData, &entityToDelete, storageIDs[i], index, 1);
+
+					if (typeInfo.hooks.move != nullptr && typeInfo.hooks.dtor != nullptr)
 					{
-						typeInfo.reflectInfo.move(world, &entityToMove, &entityToDelete, typeInfo.size, 1, srcMem, dstMem);
-						typeInfo.reflectInfo.dtor(world, &entityToDelete, typeInfo.size, 1, srcMem);
+						typeInfo.hooks.move(world, &entityToMove, &entityToDelete, typeInfo.size, 1, srcMem, dstMem);
+						typeInfo.hooks.dtor(world, &entityToDelete, typeInfo.size, 1, srcMem);
 					}
 					else
 					{
@@ -3937,8 +4014,8 @@ namespace ECS
 
 		// Push new column datas and do placement new if we have ctor
 		void* mem = columnData.PushBackN(compTypeInfo->size, compTypeInfo->alignment, addCount);
-		if (construct && compTypeInfo && compTypeInfo->reflectInfo.ctor != nullptr)
-			compTypeInfo->reflectInfo.ctor(world, &entities[oldCount], compTypeInfo->size, addCount, mem);
+		if (construct && compTypeInfo && compTypeInfo->hooks.ctor != nullptr)
+			compTypeInfo->hooks.ctor(world, &entities[oldCount], compTypeInfo->size, addCount, mem);
 	}
 
 	U32 EntityTable::AppendNewEntity(EntityID entity, EntityInfo* info, bool construct)
@@ -4195,21 +4272,23 @@ namespace ECS
 
 		// Get component type info from ComponentRecord
 		compTypeInfos = ECS_CALLOC_T_N(ComponentTypeInfo, type.size());
+		ECS_ASSERT(compTypeInfos != nullptr);
 		for (int i = 0; i < type.size(); i++)
 		{
 			TableComponentRecord* tableRecord = &tableRecords[i];
 			ComponentRecord* compRecord = reinterpret_cast<ComponentRecord*>(tableRecord->tableCache);
 			ECS_ASSERT(compRecord != nullptr && compRecord->typeInfoInited);
+			ECS_ASSERT(compRecord->typeInfo);
 			compTypeInfos[i] = *compRecord->typeInfo;
 			
-			Reflect::ReflectInfo& reflectInfo = compRecord->typeInfo->reflectInfo;
-			if (reflectInfo.ctor)
+			ComponentTypeHooks& hooks = compRecord->typeInfo->hooks;
+			if (hooks.ctor)
 				flags |= TableFlagHasCtors;
-			if (reflectInfo.dtor)
+			if (hooks.dtor)
 				flags |= TableFlagHasDtors;
-			if (reflectInfo.copy)
+			if (hooks.copy)
 				flags |= TableFlagHasCopy;
-			if (reflectInfo.move)
+			if (hooks.move)
 				flags |= TableFlagHasMove;
 		}
 	}

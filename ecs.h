@@ -29,16 +29,6 @@ namespace ECS
 	// Component reflect info
 	namespace Reflect
 	{
-		struct ReflectInfo
-		{
-			CompXtorFunc ctor;
-			CompXtorFunc dtor;
-			CompCopyFunc copy;
-			CompMoveFunc move;
-			CompCopyCtorFunc copyCtor;
-			CompMoveCtorFunc moveCtor;
-		};
-
 		template<typename T, typename enable_if_t<std::is_trivial<T>::value == false>* = nullptr>
 		static void Register(World& world, EntityID compID);
 
@@ -87,13 +77,29 @@ namespace ECS
 		}
 	};
 
+	struct ComponentTypeHooks
+	{
+		CompXtorFunc ctor;
+		CompXtorFunc dtor;
+		CompCopyFunc copy;
+		CompMoveFunc move;
+		CompCopyCtorFunc copyCtor;
+		CompMoveCtorFunc moveCtor;
+
+		IterCallbackAction onAdd;
+		IterCallbackAction onRemove;
+		IterCallbackAction onSet;
+
+		void* invoker = nullptr;
+		InvokerDeleter invokerDeleter = nullptr;
+	};
+
 	struct ComponentTypeInfo
 	{
-		Reflect::ReflectInfo reflectInfo;
+		ComponentTypeHooks hooks;
 		EntityID compID;
 		size_t alignment;
 		size_t size;
-		bool isSet;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -192,13 +198,19 @@ namespace ECS
 			RemoveComponent(entity, compID);
 		}
 
+		template<typename T, typename Func>
+		void SetComponenetOnAdded(Func&& func);
+		template<typename T, typename Func>
+		void SetComponenetOnRemoved(Func&& func);
+
 		virtual void* GetComponent(EntityID entity, EntityID compID) = 0;
 		virtual bool HasComponent(EntityID entity, EntityID compID) = 0;
 		virtual void AddRelation(EntityID entity, EntityID relation, EntityID compID) = 0;
 		virtual bool HasComponentTypeInfo(EntityID compID)const = 0;
 		virtual ComponentTypeInfo* GetComponentTypeInfo(EntityID compID) = 0;
 		virtual const ComponentTypeInfo* GetComponentTypeInfo(EntityID compID)const = 0;
-		virtual void SetComponentTypeInfo(EntityID compID, const Reflect::ReflectInfo& info) = 0;
+		virtual const ComponentTypeHooks* GetComponentTypeHooks(EntityID compID)const = 0;
+		virtual void SetComponentTypeInfo(EntityID compID, const ComponentTypeHooks& info) = 0;
 		virtual EntityID InitNewComponent(const ComponentCreateDesc& desc) = 0;
 		virtual void* GetOrCreateComponent(EntityID entity, EntityID compID) = 0;
 		virtual void AddComponent(EntityID entity, EntityID compID) = 0;
@@ -742,6 +754,36 @@ namespace ECS
 		SystemCreateDesc sysDesc = {};
 	};
 
+	template<typename T, typename Func>
+	inline void World::SetComponenetOnAdded(Func&& func)
+	{
+		EntityID compID = ComponentType<T>::ID(*this);
+		auto h = GetComponentTypeHooks(compID);
+		ComponentTypeHooks hooks = h ? *h : ComponentTypeHooks();
+		ECS_ASSERT(hooks.onAdd == nullptr);
+
+		using Invoker = typename _::EachInvoker<decay_t<Func>, T>;
+		hooks.onAdd = Invoker::Run;
+		hooks.invoker = ECS_NEW_OBJECT<Invoker>(ECS_FWD(func));
+		hooks.invokerDeleter = reinterpret_cast<InvokerDeleter>(ECS_DELETE_OBJECT<Invoker>);
+		SetComponentTypeInfo(compID, hooks);
+	}
+
+	template<typename T, typename Func>
+	inline void World::SetComponenetOnRemoved(Func&& func)
+	{
+		EntityID compID = ComponentType<T>::ID(*this);
+		auto h = GetComponentTypeHooks(compID);
+		ComponentTypeHooks hooks = h ? *h : ComponentTypeHooks();
+		ECS_ASSERT(hooks.onRemove == nullptr);
+
+		using Invoker = typename _::EachInvoker<decay_t<Func>, T>;
+		hooks.onRemove = Invoker::Run;
+		hooks.invoker = ECS_NEW_OBJECT<Invoker>(ECS_FWD(func));
+		hooks.invokerDeleter = reinterpret_cast<InvokerDeleter>(ECS_DELETE_OBJECT<Invoker>);
+		SetComponentTypeInfo(compID, hooks);
+	}
+
 	template<typename... Args>
 	inline SystemBuilder<Args...> World::CreateSystem()
 	{
@@ -952,7 +994,7 @@ namespace ECS
 		{
 			if (!world.HasComponentTypeInfo(compID))
 			{
-				ReflectInfo info = {};
+				ComponentTypeHooks info = {};
 				info.ctor = Ctor<T>();
 				info.dtor = Dtor<T>();
 				info.copy = Copy<T>();

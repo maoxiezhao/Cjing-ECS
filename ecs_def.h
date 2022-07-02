@@ -263,7 +263,7 @@ namespace ECS
 	};
 
 	using InvokerDeleter = void(*)(void* ptr);
-	using SystemAction = void(*)(Iterator* iter);
+	using SystemAction = void(*)(Iterator* it);
 
 	struct SystemCreateDesc
 	{

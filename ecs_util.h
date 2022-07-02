@@ -546,7 +546,7 @@ namespace Util
 
 		U64 GetLastID()
 		{
-			return denseArray.back();
+			return denseArray[count - 1];
 		}
 
 		void SetSourceID(U64* source)
@@ -664,7 +664,7 @@ namespace Util
 
 		size_t GetChunkIndexFromIndex(U64 index) const
 		{
-			return (size_t)index >> 12;	// ~0xfff 4096
+			return (U32)index >> 12;	// ~0xfff 4096
 		}
 
 		size_t GetOffsetFromIndex(U64 index) const
