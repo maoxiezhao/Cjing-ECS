@@ -670,6 +670,11 @@ namespace ECS
 	class Query final : public QueryIteratorBase<Comps...>
 	{
 	public:
+		Query() :
+			world(nullptr),
+			impl(nullptr)
+		{}
+
 		Query(World* world_, const QueryCreateDesc& desc_) :
 			world(world_), 
 			queryDesc(desc_),

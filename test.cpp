@@ -50,7 +50,7 @@ struct TestComponent
 
 TEST_CASE("Reflect", "ECS")
 {
-    ECS::Reflect::ReflectInfo info = {};
+    ECS::ComponentTypeHooks info = {};
     info.ctor = ECS::Reflect::Ctor<TestComponent>();
     info.dtor = ECS::Reflect::Dtor<TestComponent>();
     info.copy = ECS::Reflect::Copy<TestComponent>();
