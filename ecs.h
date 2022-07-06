@@ -198,6 +198,9 @@ namespace ECS
 			RemoveComponent(entity, compID);
 		}
 
+		template <typename Func>
+		void EachChildren(EntityID entity, Func&& func);
+
 		template<typename T, typename Func>
 		void SetComponenetOnAdded(Func&& func);
 		template<typename T, typename Func>
@@ -222,6 +225,12 @@ namespace ECS
 		SystemBuilder<Args...> CreateSystem();
 		virtual EntityID InitNewSystem(const SystemCreateDesc& desc) = 0;
 		virtual void RunSystem(EntityID entity) = 0;
+
+		///////////////////////////////////////////////////////////////////////////
+		// Filter
+		virtual bool InitFilter(const FilterCreateDesc& desc, Filter& outFilter)const = 0;
+		virtual Iterator GetFilterIterator(Filter& filter) = 0;
+		virtual bool FilterIteratorNext(Iterator* it)const = 0;
 
 		///////////////////////////////////////////////////////////////////////////
 		// Query
@@ -758,6 +767,20 @@ namespace ECS
 	private:
 		SystemCreateDesc sysDesc = {};
 	};
+
+	template<typename Func>
+	inline void World::EachChildren(EntityID entity, Func&& func)
+	{
+		Filter filter;
+		FilterCreateDesc desc = {};
+		desc.terms[0].compID = ECS_MAKE_PAIR(EcsRelationChildOf, entity);
+		InitFilter(desc, filter);
+
+		Iterator it = GetFilterIterator(filter);
+		while (FilterIteratorNext(&it)) {
+			_::EachInvoker<Func>(ECS_MOV(func)).Invoke(&it);
+		}
+	}
 
 	template<typename T, typename Func>
 	inline void World::SetComponenetOnAdded(Func&& func)

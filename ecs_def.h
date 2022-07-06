@@ -23,6 +23,7 @@ namespace ECS
 	static const EntityType EMPTY_ENTITY_TYPE = EntityType();
 	static const size_t MAX_QUERY_ITEM_COUNT = 16;
 	extern const size_t ENTITY_PAIR_FLAG;
+	extern const EntityID EcsRelationChildOf;
 
 	#define ECS_ENTITY_HI(e) (static_cast<U32>((e) >> 32))
 	#define ECS_ENTITY_LOW(e) (static_cast<U32>(e))

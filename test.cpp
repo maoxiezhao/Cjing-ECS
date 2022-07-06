@@ -243,8 +243,14 @@ TEST_CASE("ChildOf", "ECS")
     CHECK(queue[1] == e2.entity);
     CHECK(queue[2] == e4.entity);
     CHECK(queue[3] == e3.entity);
-
     queue.clear();
+
+    std::vector<ECS::EntityID> children;
+    world->EachChildren(e1.entity, [&](ECS::EntityID child) {
+        children.push_back(child);
+    });
+    CHECK(children[0] == e2.entity);
+    CHECK(children[1] == e4.entity);
 
     // System
     auto system = world->CreateSystem<Position, Position, Position>()

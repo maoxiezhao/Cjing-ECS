@@ -1029,12 +1029,12 @@ namespace ECS
 		//// Term
 		////////////////////////////////////////////////////////////////////////////////
 
-		bool IsTermInited(const Term& term)
+		bool IsTermInited(const Term& term)const
 		{
 			return term.compID != 0 || term.pred != 0;
 		}
 
-		bool FinalizeTerm(Term& term)
+		bool FinalizeTermID(Term& term)const
 		{
 			// Calculate the final compID 
 			EntityID pred = term.pred;
@@ -1043,8 +1043,8 @@ namespace ECS
 			if (ECS_HAS_ROLE(pred, EcsRolePair))
 			{
 				ECS_ASSERT(term.obj != INVALID_ENTITY);
-				pred = ECS_GET_PAIR_FIRST(term.pred);
-				obj = ECS_GET_PAIR_SECOND(term.obj);
+				pred = ECS_GET_PAIR_FIRST(pred);
+				obj = ECS_GET_PAIR_SECOND(pred);
 
 				term.pred = pred;
 				term.obj = obj;
@@ -1068,6 +1068,73 @@ namespace ECS
 				}
 			}
 
+			return true;
+		}
+
+		bool PopulateFromTermID(Term& term)const
+		{
+			EntityID pred = 0;
+			EntityID obj = 0;
+			EntityID role = term.compID & ECS_ROLE_MASK;
+
+			if (!role && term.role)
+			{
+				role = term.role;
+				term.compID |= role;
+			}
+
+			if (term.role && term.role != role)
+			{
+				ECS_ERROR("Missing role between term.id and term.role");
+				return false;
+			}
+
+			term.role = role;
+		
+			if (ECS_HAS_ROLE(term.compID, EcsRolePair))
+			{
+				pred = ECS_GET_PAIR_FIRST(term.compID);
+				obj = ECS_GET_PAIR_SECOND(term.compID);
+
+				if (!pred)
+				{
+					ECS_ERROR("Missing pred of component id");
+					return false;
+				}
+
+				if (!obj)
+				{
+					ECS_ERROR("Missing obj of component id");
+					return false;
+				}
+			}
+			else
+			{
+				pred = term.compID & ECS_COMPONENT_MASK;
+				if (!pred)
+				{
+					ECS_ERROR("Missing pred of component id");
+					return false;
+				}
+			}
+
+			term.pred = pred;
+			term.obj = obj;
+			return true;
+		}
+
+		bool FinalizeTerm(Term& term)const
+		{
+			if (term.compID == INVALID_ENTITY)
+			{
+				if (!FinalizeTermID(term))
+					return false;
+			}
+			else
+			{
+				if (!PopulateFromTermID(term))
+					return false;
+			}
 			return true;
 		}
 
@@ -1203,7 +1270,7 @@ namespace ECS
 		//// Filter
 		////////////////////////////////////////////////////////////////////////////////
 		
-		bool InitFilter(const FilterCreateDesc& desc, Filter& outFilter)
+		bool InitFilter(const FilterCreateDesc& desc, Filter& outFilter)const override
 		{
 			Filter filter;
 			I32 termCount = 0;
@@ -1252,7 +1319,7 @@ namespace ECS
 			return true;
 		}
 
-		bool FinalizeFilter(Filter& filter)
+		bool FinalizeFilter(Filter& filter)const
 		{
 			ECS_BIT_SET(filter.flags, FilterFlagMatchThis);
 			ECS_BIT_SET(filter.flags, FilterFlagIsFilter);
@@ -1274,7 +1341,7 @@ namespace ECS
 			return true;
 		}
 
-		void FiniFilter(Filter& filter)
+		void FiniFilter(Filter& filter)const
 		{
 			if (filter.terms != nullptr)
 			{
@@ -1343,6 +1410,11 @@ namespace ECS
 			}
 
 			return iter;
+		}
+
+		bool FilterIteratorNext(Iterator* it)const override
+		{
+			return NextFilterIter(it);
 		}
 
 		////////////////////////////////////////////////////////////////////////////////

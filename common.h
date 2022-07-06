@@ -10,6 +10,20 @@
 #include <array>
 #include <type_traits>
 
+#ifndef ECS_STATIC
+#if ECS_EXPORTS && (defined(_MSC_VER) || defined(__MINGW32__))
+#define ECS_API __declspec(dllexport)
+#elif ECS_EXPORTS
+#define ECS_API __attribute__((__visibility__("default")))
+#elif defined _MSC_VER
+#define ECS_API __declspec(dllimport)
+#else
+#define ECS_API
+#endif
+#else
+#define ECS_API
+#endif
+
 namespace ECS
 {
 	using U8 = uint8_t;
@@ -54,6 +68,11 @@ namespace ECS
 #define ECS_FWD(...) static_cast<decltype(__VA_ARGS__)&&>(__VA_ARGS__)
 #define ECS_ASSERT(...) assert(__VA_ARGS__)
 #define ECS_HAS_FLAG(flags, flag) (flags & (U32)flag)
+
+inline void ECS_ERROR(const char* err)
+{
+	std::cout << "[ECS_ERROR]" << err << std::endl;
+}
 
 template<typename T, typename... Args>
 inline T* ECS_NEW_OBJECT(Args&&... args)
