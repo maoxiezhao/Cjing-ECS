@@ -689,6 +689,13 @@ namespace ECS
 			SetComponent(entity, ECS_ENTITY_ID(NameComponent), sizeof(NameComponent), &nameComp, false);
 		}
 
+		const char* GetEntityName(EntityID entity)override
+		{
+			ECS_ASSERT(IsEntityValid(entity));
+			const NameComponent* ptr = static_cast<const NameComponent*>(GetComponent(entity, ECS_ENTITY_ID(NameComponent)));
+			return ptr ? ptr->name : nullptr;
+		}
+
 		void EnsureEntity(EntityID entity) override
 		{
 			if (ECS_HAS_ROLE(entity, EcsRolePair))

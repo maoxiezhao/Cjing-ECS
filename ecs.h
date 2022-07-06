@@ -126,6 +126,7 @@ namespace ECS
 		virtual bool EntityExists(EntityID entity)const = 0;
 		virtual void DeleteEntity(EntityID entity) = 0;
 		virtual void SetEntityName(EntityID entity, const char* name) = 0;
+		virtual const char* GetEntityName(EntityID entity) = 0;
 		virtual void EnsureEntity(EntityID entity) = 0;
 		virtual void Instantiate(EntityID entity, EntityID prefab) = 0;
 		virtual void ChildOf(EntityID entity, EntityID parent) = 0;

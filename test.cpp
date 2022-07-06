@@ -267,6 +267,9 @@ TEST_CASE("ChildOf", "ECS")
     CHECK(queue[1] == e2.entity);
     CHECK(queue[2] == e4.entity);
     CHECK(queue[3] == e3.entity);
+
+    const char* name = world->GetEntityName(e1.entity);
+    CHECK(std::string(name) == "e1");
 }
 
 //int main()
