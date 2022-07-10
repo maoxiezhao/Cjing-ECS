@@ -159,7 +159,8 @@ TEST_CASE("Query", "ECS")
     U32 aTimes = 0;
     U32 bTimes = 0;
     std::unique_ptr<ECS::World> world = ECS::World::Create();
-    auto query = world->CreateQuery<PositionComponent, VelocityComponent>().Build();
+    // auto query = world->CreateQuery<PositionComponent, VelocityComponent>().Build();
+    auto query1 = world->CreateQuery<PositionComponent>().Build();
     for (int i = 0; i < 5; i++)
     {
         world->CreateEntity((std::string("A") + std::to_string(i)).c_str())
@@ -167,14 +168,28 @@ TEST_CASE("Query", "ECS")
             .With<VelocityComponent>();
     }
 
-    query.ForEach([&](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
-        aTimes++;
-    });
-    query.ForEach([&](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
-        bTimes++;
-    });
+    for (int i = 0; i < 5; i++)
+    {
+        world->CreateEntity((std::string("C") + std::to_string(i)).c_str())
+            .With<PositionComponent>()
+            .With<VelocityComponent>()
+            .With<TestComponent>();
+    }
 
-    CHECK(aTimes == bTimes);
+    //query.ForEach([&](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
+    //    aTimes++;
+    //});
+    //query.ForEach([&](ECS::EntityID entity, PositionComponent& pos, VelocityComponent& vel) {
+    //    bTimes++;
+    //});
+
+    // CHECK(aTimes == bTimes);
+
+    U32 cTimes = 0;
+    query1.ForEach([&](ECS::EntityID entity, PositionComponent& pos) {
+        cTimes++;
+    });
+    CHECK(cTimes == 10);
 }
 
 

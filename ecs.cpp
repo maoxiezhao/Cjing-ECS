@@ -321,6 +321,7 @@ namespace ECS
 		I32* columns = nullptr;
 		size_t* sizes = nullptr;
 		U64 groupID = 0;
+		QueryTableMatch* nextMatch = nullptr;
 	};
 	using QueryTableMatchList = Util::List<QueryTableMatch>;
 
@@ -1524,7 +1525,7 @@ namespace ECS
 				QueryTableMatch* cur, *next;
 				for (cur = qt->data.first; cur != nullptr; cur = next)
 				{
-					next = cur->next->Cast();
+					next = cur->nextMatch;
 				
 					if (isEmpty)
 						QueryRemoveTableMatchNode(query, cur);
@@ -1828,7 +1829,7 @@ namespace ECS
 
 		void QueryFreeTableCache(QueryImpl*query, QueryTableCache* queryTable)
 		{
-			Util::ListNode<QueryTableMatch>* cur, *next;
+			QueryTableMatch* cur, *next;
 			for (cur = queryTable->data.first; cur != nullptr; cur = next)
 			{
 				QueryTableMatch* match = cur->Cast();
@@ -1840,7 +1841,7 @@ namespace ECS
 				if (!queryTable->empty)
 					QueryRemoveTableMatchNode(query, match);
 
-				next = cur->next;
+				next = cur->nextMatch;
 				ECS_FREE(cur);
 			}
 			ECS_FREE(queryTable);
