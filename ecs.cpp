@@ -1,9 +1,5 @@
 ﻿#include "ecs.h"
 
-// Finished
-// 1. Query refactor
-// 2. Event/Trigger/Observer
-
 // TODO
 // 1. Work pipeline
 // 2. Mult threads
@@ -727,6 +723,15 @@ namespace ECS
 		void ChildOf(EntityID entity, EntityID parent)override
 		{
 			AddComponent(entity, ECS_MAKE_PAIR(EcsRelationChildOf, parent));
+		}
+
+		const EntityType& GetEntityType(EntityID entity)const override
+		{
+			const EntityInfo* info = entityPool.Get(entity);
+			if (info == nullptr || info->table == nullptr)
+				return EMPTY_ENTITY_TYPE;
+
+			return info->table->type;
 		}
 
 		EntityID GetParent(EntityID entity)override
@@ -3659,7 +3664,7 @@ namespace ECS
 
 				Trigger* trigger = triggers.Requset();
 				ECS_ASSERT(trigger != nullptr);
-				trigger->id = triggers.GetLastID();
+				trigger->id = (I32)triggers.GetLastID();
 				comp->trigger = trigger;
 
 				trigger->entity = ret;

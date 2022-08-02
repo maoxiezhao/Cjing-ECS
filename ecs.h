@@ -130,6 +130,7 @@ namespace ECS
 		virtual void EnsureEntity(EntityID entity) = 0;
 		virtual void Instantiate(EntityID entity, EntityID prefab) = 0;
 		virtual void ChildOf(EntityID entity, EntityID parent) = 0;
+		virtual const EntityType& GetEntityType(EntityID entity)const = 0;
 		virtual EntityID GetParent(EntityID entity) = 0;
 		virtual EntityID GetRelationObject(EntityID entity, EntityID relation, U32 index = 0) = 0;
 
@@ -197,6 +198,17 @@ namespace ECS
 		{
 			EntityID compID = ComponentType<C>::ID(*this);
 			RemoveComponent(entity, compID);
+		}
+
+		template <typename Func>
+		inline void EachComponent(EntityID entity, const Func& func) const
+		{
+			const auto& entityType = GetEntityType(entity);
+			if (entityType.empty())
+				return;
+
+			for (const auto& type : entityType)
+				func(type);
 		}
 
 		template <typename Func>
