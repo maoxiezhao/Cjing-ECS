@@ -9,32 +9,58 @@ namespace ECS
 	//// Common
 	////////////////////////////////////////////////////////////////////////////////
 
-	class World;
-	class EntityBuilder;
+	struct WorldImpl;
 	struct EntityTable;
 	struct QueryImpl;
 	struct Iterator;
+
+	// -----------------------------------------
+	//            EntityID: 64                 |
+	//__________________________________________
+	// 	 32            |          32           |
+	// ----------------------------------------|
+	//   FFffFFff      |   FFFFffff            |
+	// ----------------------------------------|
+	//   generation    |    entity             |
+	// ----------------------------------------|
+	// 
+	// -----------------------------------------
+	//            ID: 64                       |
+	//__________________________________________
+	// 	 8     |     24          |    32       |
+	// ----------------------------------------|
+	//   ff    |     ffFFff      |   FFFFffff  |
+	// ----------------------------------------|
+	//  role   |   generation    |    entity   |
+	// ----------------------------------------|
+	//  role   |          component            |
+	//------------------------------------------
+
+	// Roles is EcsRolePair
+	// -----------------------------------------
+	//            EntityID: 64                 |
+	//__________________________________________
+	// 	 8     |     24          |    32       |
+	// ----------------------------------------|
+	//   ff    |     ffFFff      |   FFFFffff  |
+	// ------------------------------------------
+	//  Pair   |    Relation     |   Object    |
+	// -----------------------------------------
+	// 
+	// Usage:
+	// ECS_GET_PAIR_FIRST to get relation
+	// ECS_GET_PAIR_SECOND to get object
+	// ECS_MAKE_PAIR to make pair of relation and object
 
 	using EntityID = U64;
 	using EntityIDs = Vector<EntityID>;
 	using EntityType = Vector<EntityID>;
 
-	static const EntityID INVALID_ENTITY = 0;
-	static const EntityType EMPTY_ENTITY_TYPE = EntityType();
-	static const size_t MAX_QUERY_ITEM_COUNT = 16;
-	extern const size_t ENTITY_PAIR_FLAG;
-	extern const EntityID EcsRelationChildOf;
-
-	#define ECS_ENTITY_HI(e) (static_cast<U32>((e) >> 32))
-	#define ECS_ENTITY_LOW(e) (static_cast<U32>(e))
-	#define ECS_ENTITY_COMBO(lo, hi) ((static_cast<U64>(hi) << 32) + static_cast<U32>(lo))
-	#define ECS_MAKE_PAIR(re, obj) (ENTITY_PAIR_FLAG | ECS_ENTITY_COMBO(obj, re))
-
 	#define ECS_BIT_SET(flags, bit) (flags) |= (bit)
 	#define ECS_BIT_CLEAR(flags, bit) (flags) &= ~(bit) 
 	#define ECS_BIT_COND(flags, bit, cond) ((cond) \
-		? (ECS_BIT_SET(flags, bit)) \
-		: (ECS_BIT_CLEAR(flags, bit)))
+			? (ECS_BIT_SET(flags, bit)) \
+			: (ECS_BIT_CLEAR(flags, bit)))
 	#define ECS_BIT_IS_SET(flags, bit) ((flags) & (bit))
 
 	#define ECS_TERM_CACHE_SIZE (4)
@@ -44,6 +70,50 @@ namespace ECS
 	#define ITERATOR_CACHE_MASK_SIZES         (1u << 2u)
 	#define ITERATOR_CACHE_MASK_PTRS          (1u << 3u)
 	#define ITERATOR_CACHE_MASK_ALL            (255)
+
+	#define ECS_ENTITY_ID(e) (ECS_ID_##e)
+
+	#define ECS_ENTITY_MASK               (0xFFFFffffull)	// 32
+	#define ECS_ROLE_MASK                 (0xFFull << 56)
+	#define ECS_COMPONENT_MASK            (~ECS_ROLE_MASK)	// 56
+	#define ECS_GENERATION_MASK           (0xFFFFull << 32)
+	#define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
+
+	static const EntityID INVALID_ENTITY = 0;
+	static const EntityType EMPTY_ENTITY_TYPE = EntityType();
+	static const size_t MAX_QUERY_ITEM_COUNT = 16;
+
+	// Pair
+	extern const EntityID EcsRoleShared;
+	extern const EntityID EcsRolePair;
+
+	// properties
+	extern const EntityID EcsPropertyTag;
+	extern const EntityID EcsPropertyNone;
+	// Tags
+	extern const EntityID EcsTagPrefab;
+	// Events
+	extern const EntityID EcsEventTableEmpty;
+	extern const EntityID EcsEventTableFill;
+	extern const EntityID EcsEventOnAdd;
+	extern const EntityID EcsEventOnRemove;
+	// Relations
+	extern const EntityID EcsRelationIsA;
+	extern const EntityID EcsRelationChildOf;
+
+	#define ECS_ENTITY_HI(e) (static_cast<U32>((e) >> 32))
+	#define ECS_ENTITY_LOW(e) (static_cast<U32>(e))
+	#define ECS_ENTITY_COMBO(lo, hi) ((static_cast<U64>(hi) << 32) + static_cast<U32>(lo))
+	#define ECS_MAKE_PAIR(re, obj) (EcsRolePair | ECS_ENTITY_COMBO(obj, re))
+	#define ECS_HAS_ROLE(e, p) ((e & ECS_ROLE_MASK) == p)
+	#define ECS_GET_PAIR_FIRST(e) (ECS_ENTITY_HI(e & ECS_COMPONENT_MASK))
+	#define ECS_GET_PAIR_SECOND(e) (ECS_ENTITY_LOW(e))
+	#define ECS_HAS_RELATION(e, rela) (ECS_HAS_ROLE(e, EcsRolePair) && ECS_GET_PAIR_FIRST(e) == rela)
+
+	inline U64 EntityTypeHash(const EntityType& entityType)
+	{
+		return Util::HashFunc(entityType.data(), entityType.size() * sizeof(EntityID));
+	}
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Table cache
@@ -106,7 +176,7 @@ namespace ECS
 		} set;
 	};
 
-	typedef void (*IterInitAction)(World* world, const void* iterable, Iterator* it, Term* filter);
+	typedef void (*IterInitAction)(WorldImpl* world, const void* iterable, Iterator* it, Term* filter);
 	typedef bool (*IterNextAction)(Iterator* it);
 	typedef void (*IterCallbackAction)(Iterator* it);
 	
@@ -197,7 +267,7 @@ namespace ECS
 	struct Iterator
 	{
 	public:
-		World* world = nullptr;
+		WorldImpl* world = nullptr;
 
 		// Matched data
 		size_t count = 0;
@@ -317,6 +387,7 @@ namespace ECS
 		I32 eventID;
 		std::vector<EntityID> triggers;
 		void* ctx;
+		WorldImpl* world;
 	};
 
 	struct EventDesc
@@ -325,5 +396,53 @@ namespace ECS
 		EntityType ids;
 		EntityTable* table;
 		Observable* observable;
+	};
+
+	enum class QueryEventType
+	{
+		Invalid,
+		MatchTable,
+		UnmatchTable
+	};
+
+	struct QueryEvent
+	{
+		QueryEventType type = QueryEventType::Invalid;
+		EntityTable* table;
+	};
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Components
+	////////////////////////////////////////////////////////////////////////////////
+
+	using CompXtorFunc = void(*)(WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr);
+	using CompCopyFunc = void(*)(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr);
+	using CompMoveFunc = void(*)(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr);
+	using CompCopyCtorFunc = void(*)(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr);
+	using CompMoveCtorFunc = void(*)(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr);
+
+	struct ComponentTypeHooks
+	{
+		CompXtorFunc ctor;
+		CompXtorFunc dtor;
+		CompCopyFunc copy;
+		CompMoveFunc move;
+		CompCopyCtorFunc copyCtor;
+		CompMoveCtorFunc moveCtor;
+
+		IterCallbackAction onAdd;
+		IterCallbackAction onRemove;
+		IterCallbackAction onSet;
+
+		void* invoker = nullptr;
+		InvokerDeleter invokerDeleter = nullptr;
+	};
+
+	struct ComponentTypeInfo
+	{
+		ComponentTypeHooks hooks;
+		EntityID compID;
+		size_t alignment;
+		size_t size;
 	};
 }

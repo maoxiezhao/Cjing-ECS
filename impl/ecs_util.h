@@ -38,6 +38,12 @@ namespace Util
 #error "Not supported"
 #endif
 
+	template <bool V>
+	using if_t = std::enable_if_t<V, int>;
+
+	template <bool V>
+	using if_not_t = std::enable_if_t<false == V, int>;
+
 	namespace _ {
 		struct PairBase {};
 	}
@@ -70,6 +76,16 @@ namespace Util
 	{
 		using type = T;
 	};
+
+	template <typename T>
+	using RealType_t = typename RealType<T>::type;
+
+	template <typename T>
+	struct is_actual {
+		static constexpr bool value =
+			std::is_same<T, RealType_t<T> >::value && !std::is_enum<T>::value;
+	};
+
 
 	inline size_t NextPowOf2(size_t n)
 	{
