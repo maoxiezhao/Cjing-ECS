@@ -32,50 +32,61 @@ namespace ECS
 
 	bool IsTermInited(const Term& term)
 	{
-		return term.compID != 0 || term.pred != 0;
+		return term.compID != 0 || term.first.id != 0;
 	}
 
-	bool FinalizeTermID(Term& term)
+	bool IsTermMatchThis(const Term& term)
 	{
-		// Calculate the final compID 
-		EntityID pred = term.pred;
-		EntityID obj = term.obj;
-		EntityID role = term.role;
-		if (ECS_HAS_ROLE(pred, EcsRolePair))
-		{
-			ECS_ASSERT(term.obj != INVALID_ENTITY);
-			pred = ECS_GET_PAIR_FIRST(pred);
-			obj = ECS_GET_PAIR_SECOND(pred);
+		return (term.src.flags & TermFlagIsVariable) && (term.src.id == EcsPropertyThis);
+	}
 
-			term.pred = pred;
-			term.obj = obj;
+	bool FinalizeTermIDs(Term& term)
+	{
+		TermID& src = term.src;
+
+		// If source is null, set defaults
+		if (src.id == 0 && !(src.flags & TermFlagIsEntity))
+		{
+			src.id = EcsPropertyThis;
+			src.flags |= TermFlagIsVariable;
 		}
 
-		if (obj == INVALID_ENTITY && role != EcsRolePair)
+		auto FinializeTermIDFlags = [&](TermID& termID)
 		{
-			term.compID = pred | role;
-		}
-		else
-		{
-			if (obj != INVALID_ENTITY)
+			// Set entity is Entity or Variable
+			if (!(termID.flags & TermFlagIsEntity) && !(termID.flags & TermFlagIsVariable))
 			{
-				term.compID = (EcsRolePair | ECS_ENTITY_COMBO(obj, pred));
-				term.role = EcsRolePair;
+				if (termID.id) 
+				{
+					if (termID.id == EcsPropertyThis ||
+						termID.id == EcsPropertyNone ||
+						termID.id == EcsPropertyAny)
+					{
+						termID.flags |= TermFlagIsVariable;
+					}
+					else {
+						termID.flags |= TermFlagIsEntity;
+					}
+				}
 			}
-			else
+
+			if (termID.flags & TermFlagParent)
 			{
-				term.compID = pred;
-				term.role = 0;
+				termID.traverseRelation = EcsRelationChildOf;
 			}
-		}
+		};
+
+		FinializeTermIDFlags(src);
+		FinializeTermIDFlags(term.first);
+		FinializeTermIDFlags(term.second);
 
 		return true;
 	}
 
 	bool PopulateFromTermID(Term& term)
 	{
-		EntityID pred = 0;
-		EntityID obj = 0;
+		EntityID first = 0;
+		EntityID second = 0;
 		EntityID role = term.compID & ECS_ROLE_MASK;
 
 		if (!role && term.role)
@@ -94,16 +105,16 @@ namespace ECS
 
 		if (ECS_HAS_ROLE(term.compID, EcsRolePair))
 		{
-			pred = ECS_GET_PAIR_FIRST(term.compID);
-			obj = ECS_GET_PAIR_SECOND(term.compID);
+			first = ECS_GET_PAIR_FIRST(term.compID);
+			second = ECS_GET_PAIR_SECOND(term.compID);
 
-			if (!pred)
+			if (!first)
 			{
 				ECS_ERROR("Missing pred of component id");
 				return false;
 			}
 
-			if (!obj)
+			if (!second)
 			{
 				ECS_ERROR("Missing obj of component id");
 				return false;
@@ -111,31 +122,69 @@ namespace ECS
 		}
 		else
 		{
-			pred = term.compID & ECS_COMPONENT_MASK;
-			if (!pred)
+			first = term.compID & ECS_COMPONENT_MASK;
+			if (!first)
 			{
 				ECS_ERROR("Missing pred of component id");
 				return false;
 			}
 		}
 
-		term.pred = pred;
-		term.obj = obj;
+		term.first.id = first;
+		term.second.id = second;
+		return true;
+	}
+
+	bool PopulateToTermID(Term& term)
+	{
+		// Get component id from first, second and role
+
+		EntityID first = term.first.id;
+		EntityID second = term.second.id;
+		EntityID role = term.role;
+
+		if (first & ECS_ROLE_MASK)
+			return false;
+
+		if (second & ECS_ROLE_MASK)
+			return false;
+
+		if (second != INVALID_ENTITY && role == INVALID_ENTITY)
+			role = term.role = EcsRolePair;
+
+		if (second == INVALID_ENTITY && !ECS_HAS_ROLE(role, EcsRolePair))
+		{
+			term.compID = first | role;
+		}
+		else
+		{
+			// Role must is EcsRolePair
+			if (!ECS_HAS_ROLE(role, EcsRolePair))
+			{
+				ECS_ASSERT(false);
+				return false;
+			}
+
+			term.compID = ECS_MAKE_PAIR(first, second);
+		}
 		return true;
 	}
 
 	bool FinalizeTerm(Term& term)
 	{
-		if (term.compID == INVALID_ENTITY)
-		{
-			if (!FinalizeTermID(term))
-				return false;
-		}
-		else
+		// If comp id is set, populate term from the comp id
+		if (term.compID != INVALID_ENTITY)
 		{
 			if (!PopulateFromTermID(term))
 				return false;
 		}
+
+		if (!FinalizeTermIDs(term))
+			return false;
+
+		if (term.compID == INVALID_ENTITY && !PopulateToTermID(term))
+			return false;
+
 		return true;
 	}
 
@@ -189,17 +238,12 @@ namespace ECS
 		for (int i = 0; i < filter.termCount; i++)
 		{
 			Term& term = filter.terms[i];
-
-			// Query term compID
 			if (!FinalizeTerm(term))
 				return false;
 
 			term.index = i;
-
-			// Query term flags
-			if (term.set.flags & TermFlagParent)
-				term.set.relation = EcsRelationChildOf;
 		}
+
 		return true;
 	}
 
@@ -275,7 +319,7 @@ namespace ECS
 		if (TableSearchRelationLast(
 			node->table,
 			query->groupByID,
-			query->groupByItem->set.relation,
+			query->groupByItem->src.traverseRelation,
 			0, 0,
 			&depth) != -1)
 			return (U64)depth;
@@ -648,10 +692,22 @@ namespace ECS
 
 	void ProcessQueryFlags(QueryImpl* query)
 	{
+		auto ChckTermIDValid = [&](TermID& term) {
+			if ((term.flags & TermFlagIsVariable) != 0)
+				return false;
+
+			return true;
+		};
+
 		for (int i = 0; i < query->filter.termCount; i++)
 		{
 			Term& queryItem = query->filter.terms[i];
-			if (queryItem.set.flags & TermFlagCascade)
+			bool isSrcValid = ChckTermIDValid(queryItem.src);
+			bool isFirstValid = ChckTermIDValid(queryItem.first);
+			ECS_ASSERT(isSrcValid || IsTermMatchThis(queryItem));
+			ECS_ASSERT(isFirstValid);
+
+			if (queryItem.src.flags & TermFlagCascade)
 			{
 				ECS_ASSERT(query->sortByItemIndex == 0);
 				query->sortByItemIndex = i + 1;
@@ -979,6 +1035,9 @@ namespace ECS
 					return false;
 
 				if (table->flags & TableFlagIsPrefab)
+					continue;
+
+				if (table->flags & TableFlagDisabled)
 					continue;
 
 				termIter->table = table;

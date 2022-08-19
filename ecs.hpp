@@ -442,6 +442,10 @@ namespace ECS
 			entityID(id) 
 		{}
 
+		bool IsPair()const {
+			return (entityID & ECS_ROLE_MASK) == EcsRolePair;
+		}
+
 		WorldImpl* GetWorld() {
 			return world;
 		}
@@ -476,6 +480,20 @@ namespace ECS
 
 		explicit operator bool()const {
 			return IsValid();
+		}
+
+		template<typename Func>
+		inline void Each(const Func& func)const
+		{
+			auto type = GetEntityType(world, entityID);
+			if (type.empty())
+				return;
+
+			for (const auto& id : type)
+			{
+				IDView idView(world, id);
+				func(idView);
+			}
 		}
 	};
 
@@ -757,8 +775,127 @@ namespace ECS
 		}
 	};
 
+	template<typename Base>
+	struct TermBuilder
+	{
+	public:
+		TermBuilder() = default;
+		TermBuilder(Term* term_) {
+			SetTerm(term_);
+		}
+
+		Base& Src() {
+			ECS_ASSERT(term != nullptr);
+			current = &term->src;
+			return *this;
+		}
+
+		Base& First() 
+		{
+			ECS_ASSERT(term != nullptr);
+			current = &term->first;
+			return *this;
+		}
+
+		Base& Second()
+		{
+			ECS_ASSERT(term != nullptr);
+			current = &term->second;
+			return *this;
+		}
+
+		Base& SetID(EntityID id)
+		{
+			ECS_ASSERT(current != nullptr);
+			current->id = id;
+			return *this;
+		}
+
+		Base& Src(EntityID id)
+		{
+			Src();
+			SetID(id);
+			return *this;
+		}
+
+		Base& First(EntityID id)
+		{
+			First();
+			SetID(id);
+			return *this;
+		}
+
+		Base& Second(EntityID id)
+		{
+			Second();
+			SetID(id);
+			return *this;
+		}
+
+		template<typename T>
+		Base& Src()
+		{
+			Src(ComponentType<T>::ID(*GetWorld()));
+			return *this;
+		}
+
+		template<typename T>
+		Base& First()
+		{
+			First(ComponentType<T>::ID(*GetWorld()));
+			return *this;
+		}
+
+		template<typename T>
+		Base& Second()
+		{
+			Second(ComponentType<T>::ID(*GetWorld()));
+			return *this;
+		}
+
+		Base& Role(EntityID role)
+		{
+			ECS_ASSERT(term != nullptr);
+			term->role = role;
+		}
+
+		Base& Parent()
+		{
+			ECS_ASSERT(current != nullptr);
+			current->flags |= TermFlagParent;
+			return *this;
+		}
+
+		Base& Cascade()
+		{
+			ECS_ASSERT(current != nullptr);
+			current->flags |= TermFlagCascade;
+			return *this;
+		}
+
+	protected:
+		virtual ECS::WorldImpl* GetWorld() = 0;
+
+		void SetTerm(Term* term_) 
+		{
+			term = term_;
+			if (term)
+				current = &term->src;
+			else 
+				current = nullptr;
+		}
+
+	private:
+		operator Base& () {
+			return *static_cast<Base*>(this);
+		}
+
+		TermID* current = nullptr;
+		Term* term = nullptr;
+	};
+
 	template<typename Base, typename... Comps>
-	struct QueryBuilderBase
+	struct QueryBuilderBase : public TermBuilder<Base>
 	{
 	public:
 		QueryBuilderBase(WorldImpl* world_) :
@@ -768,38 +905,37 @@ namespace ECS
 			for (int i = 0; i < ids.size(); i++)
 			{
 				Term& term = queryDesc.filter.terms[i];
-				term.pred = ids[i];
+				if (ids[i] & ECS_ROLE_MASK)
+					term.compID = ids[i];
+				else
+					term.first.id = ids[i];
 			}
 		}
 
-		Base& TermIndex(I32 index)
+		Base& TermAT(I32 index)
 		{
-			currentTerm = &queryDesc.filter.terms[index];
+			ECS_ASSERT(index >= 0);
+			this->SetTerm(&queryDesc.filter.terms[index]);
 			return *this;
 		}
 
-		template<typename C>
-		Base& Obj()
+		Base& Arg(I32 index)
 		{
-			ECS_ASSERT(currentTerm != nullptr);
-			currentTerm->obj = ComponentType<C>::ID(*world);
-			return *this;
-		}
-
-		Base& Set(U32 flags)
-		{
-			ECS_ASSERT(currentTerm != nullptr);
-			currentTerm->set.flags = flags;
-			return *this;
-		}
-
-		operator Base& () {
-			return *static_cast<Base*>(this);
+			return TermAT(index);
 		}
 
 		Query<Comps...> Build()
 		{
 			return Query<Comps...>(world, queryDesc);
+		}
+
+	protected:
+		ECS::WorldImpl* GetWorld()override {
+			return world;
+		}
+
+		operator Base& () {
+			return *static_cast<Base*>(this);
 		}
 
 	protected:

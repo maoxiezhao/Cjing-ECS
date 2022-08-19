@@ -3,8 +3,12 @@
 namespace ECS
 {
 	struct WorldImpl;
+	struct ComponentRecord;
 
-	// Entity
+	////////////////////////////////////////////////////////////////////////////////
+	//// Entity
+	////////////////////////////////////////////////////////////////////////////////
+
 	EntityID CreateEntityID(WorldImpl* world, const EntityCreateDesc& desc);
 	void EnsureEntity(WorldImpl* world, EntityID entity);
 	EntityID FindEntityIDByName(WorldImpl* world, const char* name);
@@ -23,6 +27,11 @@ namespace ECS
 	void SetEntityName(WorldImpl* world, EntityID entity, const char* name);
 	const char* GetEntityName(WorldImpl* world, EntityID entity);
 	EntityID GetParent(WorldImpl* world, EntityID entity);
+	void EnableEntity(WorldImpl* world, EntityID entity, bool enabled);
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Coomponent
+	////////////////////////////////////////////////////////////////////////////////
 
 	// Component
 	EntityID InitNewComponent(WorldImpl* world, const ComponentCreateDesc& desc);
@@ -45,6 +54,10 @@ namespace ECS
 	ComponentTypeInfo* EnsureComponentTypInfo(WorldImpl* world, EntityID compID);
 	void SetComponentTypeInfo(WorldImpl* world, EntityID compID, const ComponentTypeHooks& info);
 	ComponentTypeInfo* GetComponentTypeInfo(WorldImpl* world, EntityID compID);
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// World
+	////////////////////////////////////////////////////////////////////////////////
 
 	void BeginDefer(WorldImpl* world);
 	void EndDefer(WorldImpl* world);

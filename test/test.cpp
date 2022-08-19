@@ -229,11 +229,10 @@ TEST_CASE("ChildOf", "ECS")
 
     // Query
     auto query = world.CreateQuery<Position, Position, Position>()
-        .TermIndex(0).Obj<Local>()
-        .TermIndex(1).Obj<Global>()
-        .TermIndex(2).Obj<Global>()
-        .TermIndex(2)
-        .Set(ECS::TermFlagParent | ECS::TermFlagCascade)
+        .Arg(0).Second<Local>()
+        .Arg(1).Second<Global>()
+        .Arg(2).Second<Global>()
+        .Arg(2).Parent().Cascade()
         .Build();
 
     std::vector<ECS::EntityID> queue;
@@ -276,11 +275,10 @@ TEST_CASE("ChildOf", "ECS")
 
     // System
     auto system = world.CreateSystem<Position, Position, Position>()
-        .TermIndex(0).Obj<Local>()
-        .TermIndex(1).Obj<Global>()
-        .TermIndex(2).Obj<Global>()
-        .TermIndex(2)
-        .Set(ECS::TermFlagParent | ECS::TermFlagCascade)
+        .Arg(0).Second<Local>()
+        .Arg(1).Second<Global>()
+        .Arg(2).Second<Global>()
+        .Arg(2).Parent().Cascade()
         .ForEach([&](ECS::EntityID entity, Position& p1, Position& p2, Position& pOut) {
             queue.push_back(entity);
         });

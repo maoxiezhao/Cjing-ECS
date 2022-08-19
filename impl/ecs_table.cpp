@@ -1459,6 +1459,9 @@ namespace ECS
 			EntityID compID = type[i];
 			if (compID == EcsTagPrefab)
 				flags |= TableFlagIsPrefab;
+			else if (compID == EcsTagDisabled)
+				flags |= TableFlagDisabled;
+
 
 			if (ECS_HAS_ROLE(compID, EcsRolePair))
 			{

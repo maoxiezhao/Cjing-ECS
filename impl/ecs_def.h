@@ -90,8 +90,11 @@ namespace ECS
 	// properties
 	extern const EntityID EcsPropertyTag;
 	extern const EntityID EcsPropertyNone;
+	extern const EntityID EcsPropertyThis;
+	extern const EntityID EcsPropertyAny;
 	// Tags
 	extern const EntityID EcsTagPrefab;
+	extern const EntityID EcsTagDisabled;
 	// Events
 	extern const EntityID EcsEventTableEmpty;
 	extern const EntityID EcsEventTableFill;
@@ -158,22 +161,27 @@ namespace ECS
 	enum TermFlag
 	{
 		TermFlagParent = 1 << 0,
-		TermFlagCascade = 1 << 1
+		TermFlagCascade = 1 << 1,
+		TermFlagSelf = 1 << 2,
+		TermFlagIsEntity = 1 << 3,
+		TermFlagIsVariable =  1 << 4
+	};
+
+	struct TermID
+	{
+		EntityID id;
+		U32 flags;
+		EntityID traverseRelation;
 	};
 
 	struct Term
 	{
-		EntityID pred;
-		EntityID obj;
 		EntityID compID;
-		U64 role;
-		U32 index;
-
-		struct TermSet
-		{
-			U32 flags;
-			U64 relation;
-		} set;
+		TermID src;			// Source of term
+		TermID first;		// First element of pair
+		TermID second;		// Second element of pair
+		EntityID role;
+		U32 index;			// Index of term
 	};
 
 	typedef void (*IterInitAction)(WorldImpl* world, const void* iterable, Iterator* it, Term* filter);
@@ -190,6 +198,7 @@ namespace ECS
 		FilterFlagMatchThis   = 1 << 0,
 		FilterFlagIsFilter    = 1 << 1,
 		FilterFlagIsInstanced = 1 << 2,
+		FilterFlagMatchDisabled =  1 << 3,
 	};
 
 	struct Filter

@@ -32,6 +32,9 @@ namespace ECS
 			if (table->flags & TableFlagIsPrefab)
 				return false;
 
+			if (table->flags & TableFlagDisabled)
+				return false;
+
 			return true;
 		};
 

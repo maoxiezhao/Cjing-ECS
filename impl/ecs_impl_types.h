@@ -132,6 +132,7 @@ namespace ECS
 		TableFlagHasDtors = 1 << 5,
 		TableFlagHasCopy = 1 << 6,
 		TableFlagHasMove = 1 << 7,
+		TableFlagDisabled = 1 << 8
 	};
 
 	struct TableComponentRecordData

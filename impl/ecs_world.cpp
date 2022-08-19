@@ -42,8 +42,11 @@ namespace ECS
 	// properties
 	const EntityID EcsPropertyTag = BUILTIN_ENTITY_ID;
 	const EntityID EcsPropertyNone = BUILTIN_ENTITY_ID;
+	const EntityID EcsPropertyThis = BUILTIN_ENTITY_ID;
+	const EntityID EcsPropertyAny = BUILTIN_ENTITY_ID;
 	// Tags
 	const EntityID EcsTagPrefab = BUILTIN_ENTITY_ID;
+	const EntityID EcsTagDisabled = BUILTIN_ENTITY_ID;
 	// Events
 	const EntityID EcsEventTableEmpty = BUILTIN_ENTITY_ID;
 	const EntityID EcsEventTableFill = BUILTIN_ENTITY_ID;
@@ -418,6 +421,14 @@ namespace ECS
 	EntityID GetParent(WorldImpl* world, EntityID entity)
 	{
 		return GetRelationObject(world, entity, EcsRelationChildOf, 0);
+	}
+
+	void EnableEntity(WorldImpl* world, EntityID entity, bool enabled)
+	{
+		if (enabled)
+			RemoveComponent(world, entity, EcsTagDisabled);
+		else
+			AddComponent(world, entity, EcsTagDisabled);
 	}
 
 	void EnsureEntity(WorldImpl* world, EntityID entity)
@@ -916,8 +927,10 @@ namespace ECS
 		};
 		// Property
 		InitTag(EcsPropertyTag, "EcsPropertyTag");
+		InitTag(EcsPropertyThis, "EcsPropertyThis");
 		// Tags
 		InitTag(EcsTagPrefab, "EcsTagPrefab");
+		InitTag(EcsTagDisabled, "EcsTagDisabled");
 		// Relation
 		InitTag(EcsRelationIsA, "EcsRelationIsA");
 		InitTag(EcsRelationChildOf, "EcsRelationChildOf");
