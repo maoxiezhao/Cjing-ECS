@@ -1,5 +1,5 @@
 #include "ecs_system.h"
-#include "ecs_impl_types.h"
+#include "ecs_priv_types.h"
 #include "ecs_world.h"
 #include "ecs_query.h"
 
@@ -12,10 +12,13 @@ namespace ECS
 
 	EntityID InitNewSystem(WorldImpl* world, const SystemCreateDesc& desc)
 	{
-		EntityID entity = CreateEntityID(world, desc.entity);
+		EntityID entity = desc.entity;  
 		if (entity == INVALID_ENTITY)
-			return INVALID_ENTITY;
-
+		{
+			EntityCreateDesc entityDesc = {};
+			entity = CreateEntityID(world, entityDesc);
+		}
+	
 		bool newAdded = false;
 		SystemComponent* sysComponent = static_cast<SystemComponent*>(GetOrCreateMutableByID(world, entity, ECS_ENTITY_ID(SystemComponent), &newAdded));
 		if (newAdded)
@@ -42,15 +45,24 @@ namespace ECS
 		if (sysComponent == nullptr)
 			return;
 
-		SystemAction action = sysComponent->action;
-		ECS_ASSERT(action != nullptr);
-		ECS_ASSERT(sysComponent->query != nullptr);
-		ECS_ASSERT(sysComponent->invoker != nullptr);
+		return RunSystemInternal(world, GetStageFromWorld(world), entity, sysComponent, 0, 0);
+	}
 
-		Iterator iter = GetQueryIterator(sysComponent->query);
-		iter.invoker = sysComponent->invoker;
+	void RunSystemInternal(WorldImpl* world, Stage* stage, EntityID entity, SystemComponent* system, I32 stageIndex, I32 stageCount)
+	{
+		SystemAction action = system->action;
+		ECS_ASSERT(action != nullptr);
+		ECS_ASSERT(system->query != nullptr);
+		ECS_ASSERT(system->invoker != nullptr);
+
+		BeginDefer(world);
+
+		Iterator iter = GetQueryIterator(system->query);
+		iter.invoker = system->invoker;
 		while (NextQueryIter(&iter))
 			action(&iter);
+
+		EndDefer(world);
 	}
 
 	void InitSystemComponent(WorldImpl* world)

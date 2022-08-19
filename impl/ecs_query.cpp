@@ -1,4 +1,4 @@
-#include "ecs_impl_types.h"
+#include "ecs_priv_types.h"
 #include "ecs_query.h"
 #include "ecs_world.h"
 #include "ecs_table.h"
@@ -715,6 +715,41 @@ namespace ECS
 		}
 	}
 
+	void QueryBuildSortedTables(QueryImpl* query)
+	{
+	}
+
+	// Sort tables by orderBy action
+	void QuerySortTables(WorldImpl* world, QueryImpl* query)
+	{
+		auto orderBy = query->orderBy;
+		if (orderBy == nullptr)
+			return;
+
+		bool tableSorted = false;
+		QueryTableCache* cache = nullptr;
+		EntityTableCacheIterator iter = GetTableCacheListIter(&query->cache, false);
+		while (cache = (QueryTableCache*)GetTableCacheListIterNext(iter))
+		{
+			bool dirty = true;
+			// Table sorting is a very expensive behavior
+			// Only table is changed, we should sort it
+
+			if (!dirty)
+				continue;
+
+			// Sort table by entity 
+			// TODO support sort table by target component
+			cache->table->SortByEntity(orderBy);
+			tableSorted = true;
+		}
+
+		if (tableSorted || query->matchingCount != query->prevMatchingCount)
+		{
+			QueryBuildSortedTables(query);
+		}
+	}
+
 	QueryImpl* CreateQuery(WorldImpl* world, const QueryCreateDesc& desc)
 	{
 		ECS_ASSERT(world->isFini == false);
@@ -758,6 +793,13 @@ namespace ECS
 
 		// Match exsiting tables and add into cache if query cached
 		MatchTables(ret);
+
+		// Sort tables
+		if (desc.orderBy)
+		{
+			ret->orderBy = desc.orderBy;
+			QuerySortTables(world, ret);
+		}
 
 		return ret;
 
@@ -850,7 +892,12 @@ namespace ECS
 		ECS_ASSERT(query->world != nullptr);
 
 		WorldImpl* world = query->world;
+
+		// Flush tables to change state(Empty/NonEmpty)
 		FlushPendingTables(world);
+
+		// Sort tables if order_by of query is set
+		QuerySortTables(world, query);
 
 		query->prevMatchingCount = query->matchingCount;
 

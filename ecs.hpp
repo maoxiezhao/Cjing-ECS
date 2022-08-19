@@ -10,86 +10,8 @@ namespace ECS
 	class Query;
 	template<typename... Comps>
 	struct QueryBuilder;
-
-	// Component id register
-	namespace _
-	{
-		template<typename C>
-		struct ComponentTypeRegister
-		{
-			static size_t size;
-			static size_t alignment;
-			static EntityID componentID;
-
-			static EntityID ID(WorldImpl& world)
-			{
-				if (!Registered(world))
-				{
-					size = sizeof(C);
-					alignment = alignof(C);
-
-					// In default case, the size of empty struct is 1
-					if (std::is_empty_v<C>)
-					{
-						size = 0;
-						alignment = 0;
-					}
-
-					// Register component
-					componentID = RegisterComponent(world, size, alignment);
-					// Register reflect info
-
-					if (size > 0)
-						Reflect::Register<C>(world, componentID);
-				}
-				return componentID;
-			}
-
-		private:
-			static EntityID RegisterComponent(WorldImpl& world, size_t size, size_t alignment, const char* name = nullptr)
-			{
-				const char* n = name;
-				if (n == nullptr)
-					n = Util::Typename<C>();
-
-				ComponentCreateDesc desc = {};
-				desc.entity.entity = INVALID_ENTITY;
-				desc.entity.name = n;
-				desc.entity.useComponentID = true;
-				desc.size = size;
-				desc.alignment = alignment;
-				return InitNewComponent(&world, desc);
-			}
-
-			static bool Registered(WorldImpl& world)
-			{
-				return componentID != INVALID_ENTITY && EntityExists(&world, componentID);
-			}
-		};
-		template<typename C>
-		size_t ComponentTypeRegister<C>::size = 0;
-		template<typename C>
-		size_t ComponentTypeRegister<C>::alignment = 0;
-		template<typename C>
-		EntityID ComponentTypeRegister<C>::componentID = INVALID_ENTITY;
-	}
-
-	template<typename C, typename U = int>
-	struct ComponentType;
-
-	template<typename C>
-	struct ComponentType<C, enable_if_t<!Util::IsPair<C>::value, int>> : _::ComponentTypeRegister<C> {};
-
-	template<typename C>
-	struct ComponentType<C, enable_if_t<Util::IsPair<C>::value, int>>
-	{
-		static EntityID ID(WorldImpl& world)
-		{
-			EntityID relation = _::ComponentTypeRegister<C::First>::ID(world);
-			EntityID object = _::ComponentTypeRegister<C::Second>::ID(world);
-			return ECS_MAKE_PAIR(relation, object);
-		}
-	};
+	template<typename... Comps>
+	struct PieplineBuilder;
 
 	struct IndexIterator
 	{
@@ -417,6 +339,18 @@ namespace ECS
 		template<typename... Comps>
 		QueryBuilder<Comps...> CreateQuery();
 
+		PieplineBuilder<> CreatePipeline();
+
+		void SetThreads(I32 threads, bool startThreads = false)
+		{
+			ECS::SetThreads(world, threads, startThreads);
+		}
+
+		void RunPipeline(EntityID pipeline) 
+		{
+			ECS::RunPipeline(world, pipeline);
+		}
+
 	private:
 		WorldImpl* world;
 	};
@@ -645,10 +579,12 @@ namespace ECS
 
 		void Enable()
 		{
+			EnableEntity(world, entityID, true);
 		}
 
 		void Disable()
 		{
+			EnableEntity(world, entityID, false);
 		}
 
 	protected:
@@ -853,6 +789,30 @@ namespace ECS
 			return *this;
 		}
 
+		Base& CompID(EntityID id)
+		{
+			ECS_ASSERT(term != nullptr);
+			if (id & ECS_ROLE_MASK)
+				term->compID = id;
+			else
+				term->first.id = id;
+			return *this;
+		}
+
+		Base& InOut(TypeInOutKind inout)
+		{
+			ECS_ASSERT(term != nullptr);
+			term->inout = inout;
+			return *this;
+		}
+
+		Base& InOutNone()
+		{
+			ECS_ASSERT(term != nullptr);
+			term->inout = TypeInOutKind::InOutNone;
+			return *this;
+		}
+
 		Base& Role(EntityID role)
 		{
 			ECS_ASSERT(term != nullptr);
@@ -899,34 +859,47 @@ namespace ECS
 	{
 	public:
 		QueryBuilderBase(WorldImpl* world_) :
-			world(world_),
-			ids({ (ComponentType<Comps>::ID(*world_))... })
+			world(world_)
 		{
-			for (int i = 0; i < ids.size(); i++)
-			{
-				Term& term = queryDesc.filter.terms[i];
-				if (ids[i] & ECS_ROLE_MASK)
-					term.compID = ids[i];
-				else
-					term.first.id = ids[i];
-			}
+		}
+
+		Base& Term()
+		{
+			ECS_ASSERT(termIndex < MAX_QUERY_ITEM_COUNT);
+			this->SetTerm(&queryDesc.filter.terms[termIndex]);
+			termIndex++;
+			return* this;
+		}
+
+		Base& Term(EntityID id)
+		{
+			this->Term();
+			this->CompID(id);
+			return *this;
+		}
+
+		template<typename T>
+		Base& Term()
+		{
+			this->Term();
+			this->CompID(ComponentType<T>::ID(*world));
+			this->InOut(_::TypeToInout<T>());
+			return *this;
 		}
 
 		Base& TermAT(I32 index)
 		{
 			ECS_ASSERT(index >= 0);
-			this->SetTerm(&queryDesc.filter.terms[index]);
+			I32 prevTermIndex = termIndex;
+			termIndex = index;
+			this->Term();
+			termIndex = prevTermIndex;
 			return *this;
 		}
 
 		Base& Arg(I32 index)
 		{
 			return TermAT(index);
-		}
-
-		Query<Comps...> Build()
-		{
-			return Query<Comps...>(world, queryDesc);
 		}
 
 	protected:
@@ -940,15 +913,42 @@ namespace ECS
 
 	protected:
 		WorldImpl* world;
-		Array<U64, sizeof...(Comps)> ids;
 		QueryCreateDesc queryDesc = {};
-		Term* currentTerm = nullptr;
+		ECS::Term* currentTerm = nullptr;
+		I32 termIndex = 0;
 	};
 
 	template<typename... Comps>
-	struct QueryBuilder : QueryBuilderBase<QueryBuilder<Comps...>, Comps...>
+	struct TermSig
 	{
-		QueryBuilder(WorldImpl* world_) : QueryBuilderBase<QueryBuilder<Comps...>, Comps...>(world_) {}
+		Array<U64, sizeof...(Comps)> ids;
+		Array<TypeInOutKind, sizeof...(Comps)> inout;
+
+		TermSig(WorldImpl* world) :
+			ids({ (ComponentType<Comps>::ID(*world))... }),
+			inout({ (_::TypeToInout<Comps>())... })
+		{}
+
+		template<typename Builder>
+		void Populate(Builder b)
+		{
+			for (U32 i = 0; i < ids.size(); i++)
+				b->TermAT(i).CompID(ids[i]).InOut(inout[i]);
+		}
+	};
+
+	template<typename... Comps>
+	struct QueryBuilder : public QueryBuilderBase<QueryBuilder<Comps...>, Comps...>
+	{
+		QueryBuilder(WorldImpl* world_) : QueryBuilderBase<QueryBuilder<Comps...>, Comps...>(world_) 
+		{
+			TermSig<Comps...>(world_).Populate(this);
+		}
+
+		Query<Comps...> Build()
+		{
+			return Query<Comps...>(this->world, this->queryDesc);
+		}
 	};
 
 	template<typename... Comps>
@@ -1026,7 +1026,12 @@ namespace ECS
 		SystemBuilder(WorldImpl* world_) :
 			QueryBuilderBase<SystemBuilder<Comps...>, Comps...>(world_),
 			world(world_)
-		{}
+		{
+			TermSig<Comps...>(world_).Populate(this);
+		
+			EntityCreateDesc entityDesc = {};
+			sysDesc.entity = CreateEntityID(world_, entityDesc);
+		}
 
 		template<typename Func>
 		System ForEach(Func&& func)
@@ -1040,6 +1045,14 @@ namespace ECS
 		{
 			using Invoker = IterInvoker<decay_t<Func>, Comps...>;
 			return Build<Invoker>(ECS_FWD(func));
+		}
+
+		template<typename T>
+		SystemBuilder& Kind()
+		{
+			EntityID kindType = ComponentType<T>::ID(*world);
+			AddComponent(world, sysDesc.entity, kindType);
+			return *this;
 		}
 
 	private:
@@ -1059,6 +1072,39 @@ namespace ECS
 		WorldImpl* world;
 	};
 
+	class Pipeline final : public Entity
+	{
+	public:
+		explicit Pipeline()
+		{
+			world = nullptr;
+			entityID = INVALID_ENTITY;
+		}
+
+		explicit Pipeline(WorldImpl* world, const PipelineCreateDesc& desc) :
+			Entity(world, ECS::InitPipeline(world, desc))
+		{
+		}
+	};
+
+	template<typename... Comps>
+	struct PieplineBuilder : public QueryBuilderBase<PieplineBuilder<Comps...>, Comps...>
+	{
+		PieplineBuilder(WorldImpl* world_) : QueryBuilderBase<PieplineBuilder<Comps...>, Comps...>(world_)
+		{
+			TermSig<Comps...>(world_).Populate(this);
+		}
+
+		Pipeline Build()
+		{
+			desc.query = this->queryDesc;
+			return Pipeline(this->world, desc);
+		}
+
+	private:
+		PipelineCreateDesc desc;
+	};
+
 	inline ECS::Entity World::Entity(const char* name) const
 	{
 		return ECS::Entity(world, name);
@@ -1067,7 +1113,7 @@ namespace ECS
 	inline ECS::Entity World::Prefab(const char* name) const
 	{
 		ECS::Entity entity = ECS::Entity(world, name);
-		// entity.Add()
+		entity.Add(EcsTagPrefab);
 		return entity;
 	}
 
@@ -1081,5 +1127,10 @@ namespace ECS
 	inline QueryBuilder<Comps...> World::CreateQuery()
 	{
 		return QueryBuilder<Comps...>(world);
+	}
+
+	inline PieplineBuilder<> World::CreatePipeline()
+	{
+		return PieplineBuilder<>(world);
 	}
 }

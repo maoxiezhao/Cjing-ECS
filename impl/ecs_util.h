@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "common.h"
+#include "ecs_api.h"
 
 namespace ECS
 {
@@ -294,6 +294,10 @@ namespace Util
 				}
 				return result;
 			}
+		}
+
+		void* Data() {
+			return data;
 		}
 
 		size_t GetCount()const

@@ -4,6 +4,7 @@ namespace ECS
 {
 	struct WorldImpl;
 	struct ComponentRecord;
+	struct Stage;
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Entity
@@ -59,8 +60,15 @@ namespace ECS
 	//// World
 	////////////////////////////////////////////////////////////////////////////////
 
+	void SetStageCount(WorldImpl* world, I32 stageCount);
+	void InitStage(WorldImpl* world, Stage* stage);
+	void FiniStage(WorldImpl* world, Stage* stage);
+	void SetECSSystemAPI(const EcsSystemAPI& api);
+	void SetThreads(WorldImpl* world, I32 threads, bool startThreads);
 	void BeginDefer(WorldImpl* world);
 	void EndDefer(WorldImpl* world);
+	Stage* GetStage(WorldImpl* world, I32 stageID);
+	Stage* GetStageFromWorld(WorldImpl* world);
 
 	// World
 	WorldImpl* InitWorld();

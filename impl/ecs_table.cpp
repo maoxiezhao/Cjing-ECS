@@ -1,4 +1,4 @@
-#include "ecs_impl_types.h"
+#include "ecs_priv_types.h"
 #include "ecs_table.h"
 #include "ecs_world.h"
 #include "ecs_query.h"
@@ -7,6 +7,45 @@
 
 namespace ECS
 {
+	I32 TableQuickSortPartition(EntityTable* table, I32 lo, I32 hi, QueryOrderByAction compare)
+	{
+		I32 mid = (lo + hi) / 2;
+		auto& entities = table->entities;
+		EntityID pivot = entities[mid];
+		I32 i = lo - 1;
+		I32 j = hi + 1;
+		while (true)
+		{
+			do i++; while (compare(entities[i], nullptr, pivot, nullptr) < 0);
+			do j--; while (compare(entities[j], nullptr, pivot, nullptr) > 0);
+			if (i >= j)
+				return j;
+
+			table->SwapRows(i, j);
+
+			if (mid == i)
+			{
+				mid = j;
+				pivot = entities[j];
+			}
+			else if (mid == j)
+			{
+				mid = i;
+				pivot = entities[i];
+			}
+		}
+	}
+
+	void TableQuickSort(EntityTable* table, I32 lo, I32 hi, QueryOrderByAction compare)
+	{
+		if (hi - lo < 1)
+			return;
+
+		I32 p = TableQuickSortPartition(table, lo, hi, compare);
+		TableQuickSort(table, lo, p, compare);
+		TableQuickSort(table, p + 1, hi, compare);
+	}
+
 	void OnComponentCallback(WorldImpl* world, EntityTable* table, ComponentTypeInfo* typeInfo, IterCallbackAction callback, ComponentColumnData* columnData, EntityID* entities, EntityID compID, I32 row, I32 count)
 	{
 		Iterator it = {};
@@ -1450,6 +1489,69 @@ namespace ECS
 		ECS_ASSERT(index >= 0);
 		ECS_ASSERT(index < typeToStorageMap.size());
 		return typeToStorageMap[index];
+	}
+
+	void* EntityTable::GetColumnData(I32 columnIndex)
+	{
+		ECS_ASSERT(columnIndex >= 0 && columnIndex < storageCount);
+		auto typeinfo = compTypeInfos[columnIndex];
+		return storageColumns[columnIndex].Get(typeinfo.size, typeinfo.alignment, 0);
+	}
+
+	void EntityTable::SortByEntity(QueryOrderByAction compare)
+	{
+		ECS_ASSERT(world != nullptr);
+		if (storageCount < 0)
+			return;
+
+		if (Count() < 2)
+			return;
+
+		TableQuickSort(this, 0, Count() - 1, compare);
+	}
+
+	void EntityTable::SwapRows(I32 src, I32 dst)
+	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(src >= 0 && src < entities.size());
+		ECS_ASSERT(dst >= 0 && dst < entities.size());
+
+		if (src == dst)
+			return;
+
+		// Swap entities
+		EntityID entitySrc = entities[src];
+		EntityID entityDst = entities[dst];
+		entities[dst] = entitySrc;
+		entities[src] = entityDst;
+
+		// Swap entity infos
+		EntityInfo* entityInfoSrc = entityInfos[src];
+		EntityInfo* entityInfoDst = entityInfos[dst];
+		entityInfos[dst] = entityInfoSrc;
+		entityInfos[src] = entityInfoDst;
+
+		if (storageColumns.empty())
+			return;
+
+		// Find a maximum size of storage column for temporary buffer to swap
+		size_t tempSize = 0;
+		for (int i = 0; i < storageCount; i++)
+			tempSize = std::max(tempSize, compTypeInfos[i].size);
+		
+		void* tmp = ECS_MALLOC(tempSize);
+		for (int i = 0; i < storageCount; i++)
+		{
+			ComponentTypeInfo& typeInfo = compTypeInfos[i];
+			auto& columnData = storageColumns[i];
+			void* srcMem = columnData.Get(typeInfo.size, typeInfo.alignment, src);
+			void* dstMem = columnData.Get(typeInfo.size, typeInfo.alignment, dst);
+
+			memcpy(tmp, srcMem, typeInfo.size);
+			memcpy(srcMem, dstMem, typeInfo.size);
+			memcpy(dstMem, tmp, typeInfo.size);
+		}
+		ECS_FREE(tmp);
 	}
 
 	void EntityTable::InitTableFlags()

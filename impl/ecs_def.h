@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "common.h"
+#include "ecs_api.h"
 #include "ecs_util.h"
 
 namespace ECS
@@ -86,7 +86,6 @@ namespace ECS
 	// Pair
 	extern const EntityID EcsRoleShared;
 	extern const EntityID EcsRolePair;
-
 	// properties
 	extern const EntityID EcsPropertyTag;
 	extern const EntityID EcsPropertyNone;
@@ -103,6 +102,9 @@ namespace ECS
 	// Relations
 	extern const EntityID EcsRelationIsA;
 	extern const EntityID EcsRelationChildOf;
+
+	// Builtin components
+	extern const EntityID EcsCompSystem;
 
 	#define ECS_ENTITY_HI(e) (static_cast<U32>((e) >> 32))
 	#define ECS_ENTITY_LOW(e) (static_cast<U32>(e))
@@ -167,6 +169,15 @@ namespace ECS
 		TermFlagIsVariable =  1 << 4
 	};
 
+	enum TypeInOutKind 
+	{
+		InOutDefault,
+		InOutNone,
+		InOut,
+		In,
+		Out
+	};
+
 	struct TermID
 	{
 		EntityID id;
@@ -180,6 +191,8 @@ namespace ECS
 		TermID src;			// Source of term
 		TermID first;		// First element of pair
 		TermID second;		// Second element of pair
+
+		TypeInOutKind inout;// Inout kind of contents
 		EntityID role;
 		U32 index;			// Index of term
 	};
@@ -337,9 +350,17 @@ namespace ECS
 		Term terms[MAX_QUERY_ITEM_COUNT];
 	};
 
+	/** Callback used for comparing components */
+	typedef int (*QueryOrderByAction)(
+		EntityID e1,
+		const void* ptr1,
+		EntityID e2,
+		const void* ptr2);
+
 	struct QueryCreateDesc
 	{
 		FilterCreateDesc filter;
+		QueryOrderByAction orderBy;
 	};
 
 	using InvokerDeleter = void(*)(void* ptr);
@@ -347,13 +368,18 @@ namespace ECS
 
 	struct SystemCreateDesc
 	{
-		EntityCreateDesc entity = {};
+		EntityID entity = {};
 		QueryCreateDesc query = {};
 		SystemAction action;
 		void* invoker;
 		InvokerDeleter invokerDeleter;
 	};
 
+	struct PipelineCreateDesc
+	{
+		QueryCreateDesc query = {};
+	};
+	
 	bool FilterNextInstanced(Iterator* it);
 	bool QueryNextInstanced(Iterator* it);
 

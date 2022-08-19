@@ -14,6 +14,10 @@ namespace ECS
 	I32 TableSearchType(EntityTable* table, ComponentRecord* compRecord);
 	I32 TableSearchRelationLast(EntityTable* table, EntityID compID, EntityID relation, I32 minDepth, I32 maxDepth, I32* depthOut);
 
+	// Search target component id from a table
+	// Return column of component if compID exists, otherwise return -1
+	I32 TableSearchType(EntityTable* table, EntityID compID);
+
 	TableComponentRecord* GetTableRecordFromCache(EntityTableCacheBase* cache, const EntityTable* table);
 
 	EntityTable* TableAppend(WorldImpl* world, EntityTable* table, EntityID compID, EntityTableDiff& diff);

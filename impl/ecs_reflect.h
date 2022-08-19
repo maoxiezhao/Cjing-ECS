@@ -222,4 +222,102 @@ namespace Reflect
 		}
 	}
 }
+
+// Component id register
+namespace _
+{
+	template<typename C>
+	struct ComponentTypeRegister
+	{
+		static size_t size;
+		static size_t alignment;
+		static EntityID componentID;
+
+		static EntityID ID(WorldImpl& world)
+		{
+			if (!Registered(world))
+			{
+				size = sizeof(C);
+				alignment = alignof(C);
+
+				// In default case, the size of empty struct is 1
+				if (std::is_empty_v<C>)
+				{
+					size = 0;
+					alignment = 0;
+				}
+
+				// Register component
+				componentID = RegisterComponent(world, size, alignment);
+				// Register reflect info
+
+				if (size > 0)
+					Reflect::Register<C>(world, componentID);
+			}
+			return componentID;
+		}
+
+	private:
+		static EntityID RegisterComponent(WorldImpl& world, size_t size, size_t alignment, const char* name = nullptr)
+		{
+			const char* n = name;
+			if (n == nullptr)
+				n = Util::Typename<C>();
+
+			ComponentCreateDesc desc = {};
+			desc.entity.entity = INVALID_ENTITY;
+			desc.entity.name = n;
+			desc.entity.useComponentID = true;
+			desc.size = size;
+			desc.alignment = alignment;
+			return InitNewComponent(&world, desc);
+		}
+
+		static bool Registered(WorldImpl& world)
+		{
+			return componentID != INVALID_ENTITY && EntityExists(&world, componentID);
+		}
+	};
+	template<typename C>
+	size_t ComponentTypeRegister<C>::size = 0;
+	template<typename C>
+	size_t ComponentTypeRegister<C>::alignment = 0;
+	template<typename C>
+	EntityID ComponentTypeRegister<C>::componentID = INVALID_ENTITY;
+
+	template <typename T>
+	using is_const_p = std::is_const< std::remove_pointer_t<T> >;
+
+	template <typename T, Util::if_t< is_const_p<T>::value > = 0>
+	static constexpr TypeInOutKind TypeToInout() {
+		return TypeInOutKind::In;
+	}
+
+	template <typename T, Util::if_t< std::is_reference<T>::value > = 0>
+	static constexpr TypeInOutKind TypeToInout() {
+		return TypeInOutKind::Out;
+	}
+
+	template <typename T, Util::if_not_t<is_const_p<T>::value || std::is_reference<T>::value > = 0>
+	static constexpr TypeInOutKind TypeToInout() {
+		return TypeInOutKind::InOutDefault;
+	}
+}
+
+template<typename C, typename U = int>
+struct ComponentType;
+
+template<typename C>
+struct ComponentType<C, enable_if_t<!Util::IsPair<C>::value, int>> : _::ComponentTypeRegister<C> {};
+
+template<typename C>
+struct ComponentType<C, enable_if_t<Util::IsPair<C>::value, int>>
+{
+	static EntityID ID(WorldImpl& world)
+	{
+		EntityID relation = _::ComponentTypeRegister<C::First>::ID(world);
+		EntityID object = _::ComponentTypeRegister<C::Second>::ID(world);
+		return ECS_MAKE_PAIR(relation, object);
+	}
+};
 }

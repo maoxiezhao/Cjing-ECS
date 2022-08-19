@@ -1,4 +1,4 @@
-#include "ecs_impl_types.h"
+#include "ecs_priv_types.h"
 #include "ecs_world.h"
 #include "ecs_iter.h"
 #include "ecs_table.h"

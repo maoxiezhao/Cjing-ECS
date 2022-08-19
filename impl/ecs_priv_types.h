@@ -1,6 +1,5 @@
 #pragma once
 
-#include "common.h"
 #include "ecs_def.h"
 #include "ecs_util.h"
 
@@ -183,6 +182,9 @@ namespace ECS
 		void SetEmpty();
 		size_t Count()const;
 		I32 GetStorageIndexByType(I32 index);
+		void* GetColumnData(I32 columnIndex);
+		void SortByEntity(QueryOrderByAction compare);
+		void SwapRows(I32 src, I32 dst);
 
 	private:
 		void InitTableFlags();
@@ -228,13 +230,15 @@ namespace ECS
 
 	struct QueryImpl
 	{
-		WorldImpl* world = nullptr;
-		U64 queryID;
+		U64 queryID;							// Query uniqure ptr
 		I32 sortByItemIndex = 0;
 		I32 matchingCount = 0;
 		I32 prevMatchingCount = 0;
+
 		Filter filter;
 		Iterable iterable;
+
+		QueryOrderByAction orderBy;
 
 		// Tables
 		EntityTableCache<QueryTableCache> cache; // All matched tables <QueryTableCache>
@@ -247,6 +251,8 @@ namespace ECS
 
 		// Observer
 		EntityID observer = INVALID_ENTITY;
+
+		WorldImpl* world = nullptr;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -289,6 +295,14 @@ namespace ECS
 	//// WorldImpl
 	////////////////////////////////////////////////////////////////////////////////
 
+	struct Stage
+	{
+		I32 id = 0;
+		U32 thread = 0;
+		bool async = false;
+		WorldImpl* world = nullptr;
+	};
+
 	struct WorldImpl
 	{
 		// ID infos
@@ -323,6 +337,13 @@ namespace ECS
 		Util::SparseArray<Observer> observers;
 		Util::SparseArray<Trigger> triggers;
 		int32_t eventID = 0;	// Unique id is used to distinguish events
+
+		// Pipeline
+		EntityID pipeline = 0;
+
+		// Stages
+		Stage* stages = nullptr;
+		I32 stageCount = 0;
 
 		// Status
 		bool isReadonly = false;

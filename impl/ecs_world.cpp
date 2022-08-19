@@ -1,13 +1,15 @@
-#include "ecs_impl_types.h"
+#include "ecs_priv_types.h"
 #include "ecs_reflect.h"
 #include "ecs_world.h"
 #include "ecs_table.h"
 #include "ecs_system.h"
 #include "ecs_query.h"
 #include "ecs_observer.h"
+#include "ecs_pipeline.h"
 
 namespace ECS
 {
+
 	////////////////////////////////////////////////////////////////////////////////
 	//// Definition
 	////////////////////////////////////////////////////////////////////////////////
@@ -100,8 +102,40 @@ namespace ECS
 	EntityID ECS_ENTITY_ID(InfoComponent) = BUILTIN_COMPONENT_ID;
 	EntityID ECS_ENTITY_ID(NameComponent) = BUILTIN_COMPONENT_ID;
 	EntityID ECS_ENTITY_ID(SystemComponent) = BUILTIN_COMPONENT_ID;
+	EntityID ECS_ENTITY_ID(PipelineComponent) = BUILTIN_COMPONENT_ID;
 	EntityID ECS_ENTITY_ID(TriggerComponent) = BUILTIN_COMPONENT_ID;
 	EntityID ECS_ENTITY_ID(ObserverComponent) = BUILTIN_COMPONENT_ID;
+
+	const EntityID EcsCompSystem = ECS_ENTITY_ID(SystemComponent);
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// SystemAPI
+	////////////////////////////////////////////////////////////////////////////////
+
+	EcsSystemAPI ecsSystemAPI = {};
+	bool isSystemInit = false;
+
+	static void* EcsSystemAPICalloc(size_t size)
+	{
+		return calloc(1, size);
+	}
+
+	void SetSystemDefaultAPI()
+	{
+		ecsSystemAPI.malloc_ = malloc;
+		ecsSystemAPI.calloc_ = EcsSystemAPICalloc;
+		ecsSystemAPI.realloc_ = realloc;
+		ecsSystemAPI.free_ = free;
+	}
+
+	void SetECSSystemAPI(const EcsSystemAPI& api)
+	{
+		if (isSystemInit == false)
+		{
+			ecsSystemAPI = api;
+			isSystemInit = true;
+		}
+	}
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// WorldImpl
@@ -834,6 +868,7 @@ namespace ECS
 		InitBuiltinComponentTypeInfo<InfoComponent>(world, ECS_ENTITY_ID(InfoComponent));
 		InitBuiltinComponentTypeInfo<NameComponent>(world, ECS_ENTITY_ID(NameComponent));
 		InitBuiltinComponentTypeInfo<SystemComponent>(world, ECS_ENTITY_ID(SystemComponent));
+		InitBuiltinComponentTypeInfo<PipelineComponent>(world, ECS_ENTITY_ID(PipelineComponent));
 		InitBuiltinComponentTypeInfo<TriggerComponent>(world, ECS_ENTITY_ID(TriggerComponent));
 		InitBuiltinComponentTypeInfo<ObserverComponent>(world, ECS_ENTITY_ID(ObserverComponent));
 
@@ -948,6 +983,12 @@ namespace ECS
 
 	WorldImpl* InitWorld()
 	{
+		if (isSystemInit == false)
+		{
+			SetSystemDefaultAPI();
+			isSystemInit = true;
+		}
+
 		WorldImpl* world = ECS_NEW_OBJECT<WorldImpl>();
 
 		world->pendingTables = ECS_NEW_OBJECT<Util::SparseArray<EntityTable*>>();
@@ -964,10 +1005,14 @@ namespace ECS
 		id = world->queryPool.NewIndex();
 		ECS_ASSERT(id == 0);
 
+		// Create default stage
+		SetStageCount(world, 1);
+
 		SetupComponentTypes(world);
 		InitBuiltinComponents(world);
 		InitBuiltinEntites(world);
 		InitSystemComponent(world);
+		InitPipelineComponent(world);
 
 		return world;
 	}
@@ -1019,6 +1064,9 @@ namespace ECS
 		// Fini component type infos
 		FiniComponentTypeInfos(world);
 
+		// Fini stages
+		SetStageCount(world, 0);
+
 		// Clear entity pool
 		world->entityPool.Clear();
 
@@ -1037,6 +1085,75 @@ namespace ECS
 		return true;
 	}
 
+	I32 GetStageCount(WorldImpl* world)
+	{
+		return 0;
+	}
+
+	void SetStageCount(WorldImpl* world, I32 stageCount)
+	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT((stageCount > 1 && !world->isFini) || stageCount <= 1);
+
+		if (stageCount == world->stageCount)
+			return;
+
+		// Fini existing stages
+		if (world->stageCount > 0 && stageCount != world->stageCount)
+		{
+			for (int i = 0; i < world->stageCount; i++)
+			{
+				Stage* stage = &world->stages[i];
+				ECS_ASSERT(stage->thread == 0);
+				FiniStage(world, stage);
+			}
+
+			ECS_FREE(world->stages);
+		}
+
+		world->stages = nullptr;
+		world->stageCount = stageCount;
+
+		// Init new stages
+		if (stageCount > 0)
+		{
+			world->stages = ECS_MALLOC_T_N(Stage, stageCount);
+			for (int i = 0; i < stageCount; i++)
+			{
+				Stage* stage = &world->stages[i];
+				InitStage(world, stage);
+				stage->id = i;
+			}
+		}
+	}
+
+	void InitStage(WorldImpl* world, Stage* stage)
+	{
+		ECS_NEW_PLACEMENT(stage, Stage);
+		stage->async = false;
+		stage->world = world;
+	}
+
+	void FiniStage(WorldImpl* world, Stage* stage)
+	{
+		stage->~Stage();
+	}
+
+	void SetThreads(WorldImpl* world, I32 threads, bool startThreads)
+	{
+		I32 stageCount = GetStageCount(world);
+		if (stageCount != threads)
+		{
+			SetStageCount(world, threads);
+
+			if (threads > 1 && startThreads)
+			{
+				ECS_ASSERT(false);
+				// TODO
+			}
+		}
+	}
+
 	void BeginDefer(WorldImpl* world)
 	{
 		// TODO
@@ -1047,5 +1164,19 @@ namespace ECS
 	{
 		// TODO
 		FlushDefer(world);
+	}
+
+	Stage* GetStage(WorldImpl* world, I32 stageID)
+	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(world->stageCount > stageID);
+		return &world->stages[stageID];
+	}
+
+	Stage* GetStageFromWorld(WorldImpl* world)
+	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(world->stageCount <= 1 || !world->isReadonly);
+		return &world->stages[0];
 	}
 }
