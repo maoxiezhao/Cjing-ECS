@@ -517,6 +517,7 @@ namespace ECS
 		{
 			EntityID compID = ComponentType<T>::ID(*world);
 			SetComponent(entityID, compID, value);
+			ModifiedComponent(world, entityID, compID);
 			return ToBase();
 		}
 
@@ -525,6 +526,7 @@ namespace ECS
 		{
 			EntityID compID = ComponentType<T>::ID(*world);
 			SetComponent(entityID, compID, ECS_FWD(value));
+			ModifiedComponent(world, entityID, compID);
 			return ToBase();
 		}
 

@@ -335,11 +335,11 @@ namespace ECS
 	}
 
 	// Find the insertion node of the group which has the closest groupID
-	QueryTableMatch* QueryFindGroupInsertionNode(QueryImpl* query, U64 groupID)
+	QueryTableNode* QueryFindGroupInsertionNode(QueryImpl* query, U64 groupID)
 	{
 		ECS_ASSERT(query->groupByID != INVALID_ENTITY);
 
-		QueryTableMatchList* closedList = nullptr;
+		QueryTableList* closedList = nullptr;
 		U64 closedGroupID = 0;
 		for (auto& kvp : query->groups)
 		{
@@ -347,7 +347,7 @@ namespace ECS
 			if (curGroupID >= groupID)
 				continue;
 
-			QueryTableMatchList& list = kvp.second;
+			QueryTableList& list = kvp.second;
 			if (list.last == nullptr)
 				continue;
 
@@ -361,14 +361,16 @@ namespace ECS
 	}
 
 	// Create group for the matched table node and inster into the query list
-	void QueryCreateGroup(QueryImpl* query, QueryTableMatch* node)
+	void QueryCreateGroup(QueryImpl* query, QueryTableNode* node)
 	{
+		QueryTableMatch* match = node->match;
+
 		// Find the insertion point for current group
-		QueryTableMatch* insertPoint = QueryFindGroupInsertionNode(query, node->groupID);
+		QueryTableNode* insertPoint = QueryFindGroupInsertionNode(query, match->groupID);
 		if (insertPoint == nullptr)
 		{
 			// No insertion point, just insert into the orderdTableList
-			QueryTableMatchList& list = query->tableList;
+			QueryTableList& list = query->tableList;
 			if (list.first)
 			{
 				node->next = list.first;
@@ -383,7 +385,7 @@ namespace ECS
 		}
 		else
 		{
-			Util::ListNode<QueryTableMatch>* next = insertPoint->next;
+			auto* next = insertPoint->next;
 			node->prev = insertPoint;
 			insertPoint->next = node;
 			node->next = next;
@@ -394,21 +396,46 @@ namespace ECS
 		}
 	}
 
-	void QueryInsertTableMatchNode(QueryImpl* query, QueryTableMatch* node)
+	////////////////////////////////////////////////////////////////////////////////
+	//// TableNode
+	////////////////////////////////////////////////////////////////////////////////
+
+	QueryTableMatch* QueryCreateTableNode(QueryTableCache* cache)
+	{
+		QueryTableMatch* tableMatch = ECS_CALLOC_T(QueryTableMatch);
+		QueryTableNode* node = &tableMatch->node;
+		node->match = tableMatch;
+
+		if (cache->data.first == nullptr)
+		{
+			cache->data.first = tableMatch;
+			cache->data.last = tableMatch;
+		}
+		else
+		{
+			ECS_ASSERT(cache->data.last != nullptr);
+			cache->data.last->nextMatch = tableMatch;
+			cache->data.last = tableMatch;
+		}
+		return tableMatch;
+	}
+
+	void QueryInsertTableNode(QueryImpl* query, QueryTableNode* node)
 	{
 		ECS_ASSERT(node->prev == nullptr && node->next == nullptr);
+		QueryTableMatch* match = node->match;
 
 		// Compute group id
 		bool groupByID = query->groupByID != INVALID_ENTITY;
 		if (groupByID)
-			node->groupID = ComputeGroupID(query, node);
+			match->groupID = ComputeGroupID(query, match);
 		else
-			node->groupID = 0;
+			match->groupID = 0;
 
 		// Get target match list
-		QueryTableMatchList* list = nullptr;
+		QueryTableList* list = nullptr;
 		if (groupByID)
-			list = &query->groups[node->groupID];
+			list = &query->groups[match->groupID];
 		else
 			list = &query->tableList;
 
@@ -416,8 +443,8 @@ namespace ECS
 		if (list->last)
 		{
 			// Insert at the end of list if list is init
-			Util::ListNode<QueryTableMatch>* last = list->last;
-			Util::ListNode<QueryTableMatch>* lastNext = last->next;
+			auto* last = list->last;
+			auto* lastNext = last->next;
 			node->prev = last;
 			node->next = lastNext;
 			last->next = node;
@@ -452,16 +479,16 @@ namespace ECS
 		query->matchingCount++;
 	}
 
-	void QueryRemoveTableMatchNode(QueryImpl* query, QueryTableMatch* node)
+	void QueryRemoveTableNode(QueryImpl* query, QueryTableNode* node)
 	{
-		Util::ListNode<QueryTableMatch>* next = node->next;
-		Util::ListNode<QueryTableMatch>* prev = node->prev;
+		auto next = node->next;
+		auto prev = node->prev;
 		if (prev)
 			prev->next = next;
 		if (next)
 			next->prev = prev;
 
-		QueryTableMatchList& list = query->tableList;
+		QueryTableList& list = query->tableList;
 		ECS_ASSERT(list.count > 0);
 		list.count--;
 
@@ -475,6 +502,10 @@ namespace ECS
 
 		query->matchingCount--;
 	}
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// TableMatch
+	////////////////////////////////////////////////////////////////////////////////
 
 	void UpdateQueryTableMatch(QueryImpl* query, EntityTable* table, bool isEmpty)
 	{
@@ -494,36 +525,18 @@ namespace ECS
 				next = cur->nextMatch;
 
 				if (isEmpty)
-					QueryRemoveTableMatchNode(query, cur);
+					QueryRemoveTableNode(query, &cur->node);
 				else
-					QueryInsertTableMatchNode(query, cur);
+					QueryInsertTableNode(query, &cur->node);
 			}
 		}
-	}
-
-	QueryTableMatch* QueryCreateTableMatchNode(QueryTableCache* cache)
-	{
-		QueryTableMatch* tableMatch = ECS_CALLOC_T(QueryTableMatch);
-
-		ECS_ASSERT(tableMatch);
-		if (cache->data.first == nullptr)
-		{
-			cache->data.first = tableMatch;
-			cache->data.last = tableMatch;
-		}
-		else
-		{
-			cache->data.last->next = tableMatch;
-			cache->data.last = tableMatch;
-		}
-		return tableMatch;
 	}
 
 	QueryTableMatch* QueryAddTableMatch(QueryImpl* query, QueryTableCache* qt, EntityTable* table)
 	{
 		U32 termCount = query->filter.termCount;
 
-		QueryTableMatch* qm = QueryCreateTableMatchNode(qt);
+		QueryTableMatch* qm = QueryCreateTableNode(qt);
 		ECS_ASSERT(qm);
 		qm->table = table;
 		qm->termCount = termCount;
@@ -532,7 +545,7 @@ namespace ECS
 		qm->sizes = ECS_CALLOC_T_N(size_t, termCount);
 
 		if (table != nullptr && GetTableCount(table) != 0)
-			QueryInsertTableMatchNode(query, qm);
+			QueryInsertTableNode(query, &qm->node);
 
 		return qm;
 	}
@@ -550,14 +563,13 @@ namespace ECS
 		QueryTableMatch* cur, * next;
 		for (cur = queryTable->data.first; cur != nullptr; cur = next)
 		{
-			QueryTableMatch* match = cur->Cast();
-			ECS_FREE(match->ids);
-			ECS_FREE(match->columns);
-			ECS_FREE(match->sizes);
+			ECS_FREE(cur->ids);
+			ECS_FREE(cur->columns);
+			ECS_FREE(cur->sizes);
 
 			// Remove non-emtpy table
 			if (!queryTable->empty)
-				QueryRemoveTableMatchNode(query, match);
+				QueryRemoveTableNode(query, &cur->node);
 
 			next = cur->nextMatch;
 			ECS_FREE(cur);
@@ -637,6 +649,115 @@ namespace ECS
 		}
 	}
 
+	////////////////////////////////////////////////////////////////////////////////
+	//// Monitor
+	////////////////////////////////////////////////////////////////////////////////
+
+	bool QueryGetTableMatchMonitor(QueryImpl* query, QueryTableMatch* match)
+	{
+		if (!query->monitor.empty())
+			return false;
+
+		auto& monitor = query->monitor;
+		// Monitor[0]    -> table dirty
+		// Monitor[1-N] - > table column dirty
+		monitor.resize(query->filter.termCount + 1);
+
+		auto& filter = query->filter;
+		for (int i = 0; i < filter.termCount; i++)
+		{
+			int t = filter.terms[i].index;
+			monitor[t + 1] = -1;
+
+			// Term is readonly, do not to monitor
+			if (filter.terms[i].inout == TypeInOutKind::Out ||
+				filter.terms[i].inout == TypeInOutKind::InOutNone)
+				continue;
+
+			if (match->columns[t] == INVALID_ENTITY)
+				continue;
+
+			monitor[t + 1] = 0;
+		}
+
+		match->monitor = monitor.data();
+		query->hasMonitor = true;
+		return true;
+	}
+
+	void QuerySyncMatchMonitor(QueryImpl* query, QueryTableMatch* match)
+	{
+		ECS_ASSERT(match != nullptr);
+		if (query->monitor.empty())
+			return;
+
+		auto& monitor = query->monitor;
+		// Monitor[0]    -> table dirty
+		// Monitor[1-N] - > table column dirty
+		monitor[0] = match->table->GetTableDirty();
+
+		const I32* dirtyState = match->table->GetColumnDirty();
+		auto& filter = query->filter;
+		for (int i = 0; i < filter.termCount; i++)
+		{
+			I32 t = filter.terms[i].index;
+			if (monitor[t] == -1)
+				continue;
+
+			I32 columnIndex = match->columns[t];	
+			monitor[t + 1] = dirtyState[columnIndex];
+		}
+	}
+
+	bool QueryCheckTableMonitor(QueryImpl* query, QueryTableMatch* match)
+	{
+		ECS_ASSERT(query != nullptr);
+		ECS_ASSERT(match != nullptr);
+
+		if (QueryGetTableMatchMonitor(query, match))
+			return true;
+
+		auto& monitor = query->monitor;
+		ECS_ASSERT(!monitor.empty());
+
+		// Check table monitor
+		// Monitor[0]    -> table dirty
+		// Monitor[1-N] - > table column dirty
+		if (monitor[0] != match->table->GetTableDirty())
+			return true;
+
+		auto& filter = query->filter;
+		for (int i = 0; i < filter.termCount; i++)
+		{
+			I32 t = filter.terms[i].index;
+			if (monitor[t] == -1)
+				continue;
+
+			I32 columnIndex = match->columns[t];
+			const I32* dirtyState = match->table->GetColumnDirty();
+			if (monitor[t + 1] != dirtyState[columnIndex])
+				return true;
+		}
+
+		return false;
+	}
+
+	bool QueryCheckTableMonitor(QueryImpl* query, QueryTableCache* table)
+	{
+		QueryTableNode* cur = &table->data.first->node;
+		QueryTableNode* end = table->data.last->node.next->Cast();
+		for (; cur != end; cur = cur->next->Cast())
+		{
+			if (QueryCheckTableMonitor(query, cur->match))
+				return true;
+		}
+		return false;
+	}
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Query Impl
+	////////////////////////////////////////////////////////////////////////////////
+
 	void FiniQuery(QueryImpl* query)
 	{
 		if (query == nullptr || query->queryID == 0)
@@ -715,8 +836,123 @@ namespace ECS
 		}
 	}
 
+	struct SortHelper
+	{
+		QueryTableMatch* match;
+		EntityID* entities;
+		I32 row;
+		I32 size;
+		I32 count;
+	};
+
+	EntityID GetEntityFromHelper(const SortHelper& helper)
+	{
+		if (helper.row >= helper.count)
+			return INVALID_ENTITY;
+		return helper.entities[helper.row];
+	}
+
+	// Build table slices for sorted tables
 	void QueryBuildSortedTables(QueryImpl* query)
 	{
+		query->tableSlices.clear();
+
+		auto compare = query->orderBy;
+		if (compare == nullptr)
+			return;
+
+		if (query->groupByID)
+		{
+			// TODO
+			ECS_ASSERT(false);
+			return;
+		}
+
+		auto& tableList = query->tableList;
+		if (tableList.count <= 0)
+			return;
+
+		// Collect all tables to be sorted
+		Vector<SortHelper> helpers;
+		auto cur = tableList.first;
+		auto last = tableList.last->next;
+		for (; cur != last; cur = cur->next)
+		{
+			QueryTableMatch* match = cur->Cast()->match;
+			EntityTable* table = match->table;
+			ECS_ASSERT(table->Count() > 0);
+
+			// int column = -1;
+			// TODO if (query->orderByComponent != nullptr)
+
+			helpers.emplace_back();
+			auto& helper = helpers.back();
+			helper.match = match;
+			helper.entities = table->entities.data();
+			helper.row = 0;
+			helper.count = (I32)table->Count();
+		}
+
+		I32 count = (I32)helpers.size();
+		ECS_ASSERT(count > 0);
+
+		// The entity order of different tables may overlap, so we create table slices
+		while (true)
+		{
+			bool finished = false;
+			QueryTableNode* curSlice = nullptr;
+			I32 min = 0;
+			EntityID e1;
+			while ((e1 = GetEntityFromHelper(helpers[min])) == INVALID_ENTITY)
+			{
+				min++;
+				if (min == count)
+				{
+					finished = true;
+					break;
+				}
+			}
+			if (finished)
+				break;
+
+			// Find the entityHelper with the smallest entity (helpers[i].row)
+			for (int j = min + 1; j < count; j++)
+			{
+				EntityID e2 = GetEntityFromHelper(helpers[j]);
+				if (e2 == INVALID_ENTITY)
+					continue;
+
+				if (compare(e1, nullptr, e2, nullptr) > 0)
+				{
+					// e1 > e2
+					min = j;
+					e1 = GetEntityFromHelper(helpers[min]);
+				}
+			}
+
+			if (curSlice == nullptr || curSlice->match != helpers[min].match)
+			{
+				query->tableSlices.emplace_back();
+				curSlice = &query->tableSlices.back();
+				curSlice->match = helpers[min].match;
+				curSlice->offset = helpers[min].row;
+				curSlice->count = 0;
+			}
+
+			helpers[min].row++;
+			curSlice->count++;
+		}
+		
+		for (int i = 0; i < query->tableSlices.size(); i++)
+		{
+			if (i > 0)
+				query->tableSlices[i].prev = &query->tableSlices[i - 1];
+			if (i < (query->tableSlices.size() - 1))
+				query->tableSlices[i].next = &query->tableSlices[i + 1];
+		}
+			
+		query->tableSlices.front().prev = nullptr;
+		query->tableSlices.back().next = nullptr;
 	}
 
 	// Sort tables by orderBy action
@@ -731,9 +967,11 @@ namespace ECS
 		EntityTableCacheIterator iter = GetTableCacheListIter(&query->cache, false);
 		while (cache = (QueryTableCache*)GetTableCacheListIterNext(iter))
 		{
-			bool dirty = true;
+			bool dirty = false;
 			// Table sorting is a very expensive behavior
 			// Only table is changed, we should sort it
+			if (QueryCheckTableMonitor(query, cache))
+				dirty = true;
 
 			if (!dirty)
 				continue;
@@ -744,6 +982,7 @@ namespace ECS
 			tableSorted = true;
 		}
 
+		// Each table is sorted, and then sort all tables
 		if (tableSorted || query->matchingCount != query->prevMatchingCount)
 		{
 			QueryBuildSortedTables(query);
@@ -901,15 +1140,24 @@ namespace ECS
 
 		query->prevMatchingCount = query->matchingCount;
 
+		I32 tableCount;
+		if (!query->tableSlices.empty())
+			tableCount = (I32)query->tableSlices.size();
+		else
+			tableCount = query->cache.GetTableCount();
+
 		QueryIterator queryIt = {};
-		queryIt.query = query;
-		queryIt.node = (QueryTableMatch*)query->tableList.first;
+		queryIt.query = query;		
+		if (query->orderBy && query->tableList.count > 0)
+			queryIt.node = &query->tableSlices.front();
+		else
+			queryIt.node = query->tableList.first->Cast();
 
 		Iterator iter = {};
 		iter.world = world;
 		iter.terms = query->filter.terms;
 		iter.termCount = query->filter.termCount;
-		iter.tableCount = query->cache.GetTableCount();
+		iter.tableCount = tableCount;
 		iter.priv.iter.query = queryIt;
 		iter.next = NextQueryIter;
 
@@ -1227,20 +1475,30 @@ namespace ECS
 		QueryIterator* iter = &it->priv.iter.query;
 		QueryImpl* query = iter->query;
 
+		// Prev match has been iterated, sync monitor for it
+		QueryTableNode* prev = iter->prev;
+		if (prev != nullptr)
+		{
+			if (query->hasMonitor)
+				QuerySyncMatchMonitor(query, prev->match);
+		}
+
 		// Validate interator
 		ValidateInteratorCache(*it);
 
 		QueryIterCursor cursor;
-		QueryTableMatch* node, * next;
+		QueryTableNode* node, * next;
 		for (node = iter->node; node != nullptr; node = next)
 		{
-			EntityTable* table = node->table;
-			next = (QueryTableMatch*)node->next;
+			EntityTable* table = node->match->table;
+			next = node->next->Cast();
 
 			if (table != nullptr)
 			{
-				cursor.first = 0;
-				cursor.count = GetTableCount(table);
+				cursor.first = node->offset;
+				cursor.count = node->count;
+				if (cursor.count == 0)
+					cursor.count = GetTableCount(table);
 				ECS_ASSERT(cursor.count != 0);
 
 				I32 termCount = query->filter.termCount;
@@ -1248,9 +1506,9 @@ namespace ECS
 				{
 					Term& term = query->filter.terms[i];
 					I32 index = term.index;
-					it->ids[index] = node->ids[index];
-					it->columns[index] = node->columns[index];
-					it->sizes[index] = node->sizes[index];
+					it->ids[index] = node->match->ids[index];
+					it->columns[index] = node->match->columns[index];
+					it->sizes[index] = node->match->sizes[index];
 				}
 			}
 			else

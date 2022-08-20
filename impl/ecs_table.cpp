@@ -1064,6 +1064,12 @@ namespace ECS
 		// Init type infos
 		InitTypeInfos();
 
+		// Set dirty info
+		tableDirty = 1;
+		columnDirty.resize(storageCount);
+		for (int i = 0; i < columnDirty.size(); i++)
+			columnDirty[i] = 1;
+
 		return true;
 	}
 
@@ -1223,6 +1229,9 @@ namespace ECS
 		if (index != count && entityInfoToMove != nullptr)
 			entityInfoToMove->row = index;
 
+		// Set table dirty
+		SetTableDirty();
+
 		// Pending empty table
 		if (count == 0)
 			SetEmpty();
@@ -1324,6 +1333,9 @@ namespace ECS
 		// Add a new entity for table
 		entities.push_back(entity);
 		entityInfos.push_back(info);
+
+		// Set table dirty
+		SetTableDirty();
 
 		// ensure that the columns have the same size as the entities and records.
 		U32 newCapacity = (U32)entities.capacity();
@@ -1519,6 +1531,9 @@ namespace ECS
 		if (src == dst)
 			return;
 
+		// Set table dirty
+		SetTableDirty();
+
 		// Swap entities
 		EntityID entitySrc = entities[src];
 		EntityID entityDst = entities[dst];
@@ -1552,6 +1567,18 @@ namespace ECS
 			memcpy(dstMem, tmp, typeInfo.size);
 		}
 		ECS_FREE(tmp);
+	}
+
+	void EntityTable::SetTableDirty()
+	{
+		tableDirty++;
+	}
+
+	void EntityTable::SetColumnDirty(EntityID compID)
+	{
+		I32 index = TableSearchType(this, compID);
+		ECS_ASSERT(index >= 0 && index < storageCount);
+		columnDirty[index]++;
 	}
 
 	void EntityTable::InitTableFlags()

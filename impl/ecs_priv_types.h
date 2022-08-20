@@ -167,6 +167,10 @@ namespace ECS
 		ComponentTypeInfo* compTypeInfos;			// CompTypeInfo1, CompTypeInfo2, CompTypeInfo3
 		Vector<TableComponentRecord> tableRecords;  // CompTable1,    CompTable2,    CompTable3
 
+		// Dirty infos	
+		I32 tableDirty;
+		Vector<I32> columnDirty;	// Comp1Dirty,    Comp2Dirty,    Comp3Dirty
+
 		bool InitTable(WorldImpl* world_);
 		void Claim();
 		bool Release();
@@ -185,6 +189,15 @@ namespace ECS
 		void* GetColumnData(I32 columnIndex);
 		void SortByEntity(QueryOrderByAction compare);
 		void SwapRows(I32 src, I32 dst);
+		void SetTableDirty();
+		void SetColumnDirty(EntityID id);
+
+		I32 GetTableDirty()const {
+			return tableDirty;
+		}
+		const I32* GetColumnDirty()const {
+			return columnDirty.data();
+		}
 
 	private:
 		void InitTableFlags();
@@ -209,8 +222,16 @@ namespace ECS
 
 	const size_t QUERY_ITEM_SMALL_CACHE_SIZE = 4;
 
-	struct QueryTableMatch : Util::ListNode<QueryTableMatch>
+	struct QueryTableNode : Util::ListNode<QueryTableNode>
 	{
+		struct QueryTableMatch* match;
+		I32 offset = 0;					// Starting point in table
+		I32 count = 0;					// Number of entities
+	};
+
+	struct QueryTableMatch
+	{
+		QueryTableNode node;
 		EntityTable* table = nullptr;
 		I32 termCount = 0;
 		U64* ids = nullptr;
@@ -218,8 +239,9 @@ namespace ECS
 		size_t* sizes = nullptr;
 		U64 groupID = 0;
 		QueryTableMatch* nextMatch = nullptr;
+		I32* monitor = nullptr;
 	};
-	using QueryTableMatchList = Util::List<QueryTableMatch>;
+	using QueryTableList = Util::List<QueryTableNode>;
 
 	struct QueryTableCacheData
 	{
@@ -230,7 +252,7 @@ namespace ECS
 
 	struct QueryImpl
 	{
-		U64 queryID;							// Query uniqure ptr
+		U64 queryID;							 // Query uniqure ptr
 		I32 sortByItemIndex = 0;
 		I32 matchingCount = 0;
 		I32 prevMatchingCount = 0;
@@ -238,19 +260,24 @@ namespace ECS
 		Filter filter;
 		Iterable iterable;
 
-		QueryOrderByAction orderBy;
-
 		// Tables
 		EntityTableCache<QueryTableCache> cache; // All matched tables <QueryTableCache>
-		QueryTableMatchList tableList;	         // Non-empty ordered tables
+		QueryTableList tableList;	         // Non-empty ordered tables
+		
+		QueryOrderByAction orderBy;				
+		Vector<QueryTableNode> tableSlices;     // Table sorted by orderby
 
 		// Group
 		EntityID groupByID = INVALID_ENTITY;
 		Term* groupByItem = nullptr;
-		Map<QueryTableMatchList> groups;
+		Map<QueryTableList> groups;
 
 		// Observer
 		EntityID observer = INVALID_ENTITY;
+
+		// Monitor
+		Vector<I32> monitor;
+		bool hasMonitor = false;
 
 		WorldImpl* world = nullptr;
 	};

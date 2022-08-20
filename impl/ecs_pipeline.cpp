@@ -82,7 +82,6 @@ namespace ECS
 
 		// Traverse all systems in order, check all components from system
 		// If they dont have a conflict of writing, merge these systems into the same PipelineOperation
-
 		auto it = GetQueryIterator(pipeline->query);
 		while (NextQueryIter(&it))
 		{

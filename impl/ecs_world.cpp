@@ -741,6 +741,16 @@ namespace ECS
 		return TableSearchType(table, compID) != -1;
 	}
 
+	void ModifiedComponent(WorldImpl* world, EntityID entity, EntityID compID)
+	{
+		ECS_ASSERT(world != nullptr);
+
+		// Table column dirty
+		EntityInfo* info = world->entityPool.Get(entity);
+		if (info->table != nullptr)
+			info->table->SetColumnDirty(compID);
+	}
+
 	void SetComponent(WorldImpl* world, EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove)
 	{
 		EntityInfo* info = world->entityPool.Ensure(entity);
@@ -775,6 +785,9 @@ namespace ECS
 		{
 			memset(dst, 0, size);
 		}
+
+		// Table column dirty
+		info->table->SetColumnDirty(compID);
 	}
 
 	void Instantiate(WorldImpl* world, EntityID entity, EntityID prefab)

@@ -248,13 +248,13 @@ namespace ECS
 		I32 matchesLeft;
 	};
 
-	struct QueryTableMatch;
+	struct QueryTableNode;
 
 	struct QueryIterator
 	{
 		QueryImpl* query = nullptr;
-		QueryTableMatch* node = nullptr;
-		QueryTableMatch* prev = nullptr;
+		QueryTableNode* node = nullptr;
+		QueryTableNode* prev = nullptr;
 	};
 
 	struct IteratorCache 
