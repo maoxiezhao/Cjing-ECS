@@ -318,20 +318,57 @@ namespace ECS
 		Util::SparseArray<EventRecords> events;	// Sparse<EventID, EventRecords>
 	};
 
+	struct ObjectBase
+	{
+		I32 type;
+	};
+
+	////////////////////////////////////////////////////////////////////////////////
+	//// Object
+	////////////////////////////////////////////////////////////////////////////////
+
+	inline void InitEcsObject(ObjectBase* object, I32 type)
+	{
+		object->type = type;
+	}
+
+	inline bool IsEcsObject(ObjectBase* object, I32 type)
+	{
+		return object->type == type;
+	}
+
+#define ECS_DEFINE_OBEJCT(type) type##_magic
+#define ECS_INIT_OBJECT(object, type)\
+    InitEcsObject(&object->base, type##_magic)
+#define ECS_CHECK_OBJECT(object, type) \
+	IsEcsObject(object, type##_magic)
+
+	extern const U32 ECS_DEFINE_OBEJCT(WorldImpl);
+	extern const U32 ECS_DEFINE_OBEJCT(Stage);
+
 	////////////////////////////////////////////////////////////////////////////////
 	//// WorldImpl
 	////////////////////////////////////////////////////////////////////////////////
 
 	struct Stage
 	{
+		// Base object info
+		ObjectBase base;
+
+		// Base info
 		I32 id = 0;
-		U32 thread = 0;
-		bool async = false;
+
+		// Thread
+		void* thread = 0;	
+		ObjectBase* threadCtx = nullptr;
 		WorldImpl* world = nullptr;
 	};
 
 	struct WorldImpl
 	{
+		// Base object info
+		ObjectBase base;
+
 		// ID infos
 		EntityID lastComponentID = 0;
 		EntityID lastID = 0;
@@ -367,6 +404,7 @@ namespace ECS
 
 		// Pipeline
 		EntityID pipeline = 0;
+		ThreadContext threadCtx;
 
 		// Stages
 		Stage* stages = nullptr;

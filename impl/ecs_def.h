@@ -257,6 +257,12 @@ namespace ECS
 		QueryTableNode* prev = nullptr;
 	};
 
+	struct WorkerIterator
+	{
+		I32 index;
+		I32 count;
+	};
+
 	struct IteratorCache 
 	{
 		EntityID ids[ECS_TERM_CACHE_SIZE];
@@ -274,6 +280,7 @@ namespace ECS
 			TermIterator term;
 			FilterIterator filter;
 			QueryIterator query;
+			WorkerIterator worker;
 		} iter;
 		IteratorCache cache;
 	};
@@ -312,10 +319,6 @@ namespace ECS
 		I32 termCount = 0;
 		I32 tableCount = 0;
 
-		// Context
-		void* invoker = nullptr;
-		void* ctx = nullptr;
-
 		// Event
 		EntityID event;
 
@@ -323,8 +326,13 @@ namespace ECS
 		Iterator* chainIter = nullptr;
 		IterNextAction next = nullptr;
 		
+		// Impl datas
 		IteratorPrivate priv;
+
+		// Context
 		U32 flags = 0;
+		void* invoker = nullptr;
+		void* ctx = nullptr;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -373,6 +381,7 @@ namespace ECS
 		SystemAction action;
 		void* invoker;
 		InvokerDeleter invokerDeleter;
+		bool multiThreaded = false;
 	};
 
 	struct PipelineCreateDesc
@@ -444,6 +453,11 @@ namespace ECS
 	{
 		QueryEventType type = QueryEventType::Invalid;
 		EntityTable* table;
+	};
+
+	struct ThreadContext
+	{
+		void* payload = nullptr;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////

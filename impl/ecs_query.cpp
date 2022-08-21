@@ -897,10 +897,10 @@ namespace ECS
 		ECS_ASSERT(count > 0);
 
 		// The entity order of different tables may overlap, so we create table slices
+		QueryTableNode* curSlice = nullptr;
 		while (true)
 		{
 			bool finished = false;
-			QueryTableNode* curSlice = nullptr;
 			I32 min = 0;
 			EntityID e1;
 			while ((e1 = GetEntityFromHelper(helpers[min])) == INVALID_ENTITY)

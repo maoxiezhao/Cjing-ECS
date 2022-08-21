@@ -1057,6 +1057,12 @@ namespace ECS
 			return *this;
 		}
 
+		SystemBuilder& MultiThread(bool multiThreaded)
+		{
+			sysDesc.multiThreaded = multiThreaded;
+			return *this;
+		}
+
 	private:
 		template<typename Invoker, typename Func>
 		System Build(Func&& func)

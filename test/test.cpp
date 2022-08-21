@@ -292,3 +292,45 @@
 //    const char* name = e1.GetName();
 //    CHECK(std::string(name) == "e1");
 //}
+//
+//struct Rendering {};
+//
+//TEST_CASE("Pipeline", "ECS")
+//{
+//    World world;
+//    world.SetThreads(4);
+//    ECS::Entity entity;
+//    for (int i = 0; i < 50; i++)
+//    {
+//        if (i == 0)
+//            entity = world.Entity(std::to_string(i).c_str()).Add<VelocityComponent>();
+//        else
+//            world.Entity(std::to_string(i).c_str()).Add<VelocityComponent>();
+//    }
+//
+//    int a = 0;
+//    int b = 0;
+//    auto system1 = world.CreateSystem<VelocityComponent>()
+//        .Kind<Rendering>()
+//        .MultiThread(true)
+//        .ForEach([&](ECS::Entity entity, VelocityComponent& vel) {
+//            a++;
+//        });
+//
+//    auto system2 = world.CreateSystem<VelocityComponent>()
+//        .Kind<Rendering>()
+//        .ForEach([&](ECS::Entity entity, VelocityComponent& vel) {
+//            b++;
+//        });
+//
+//    auto pipeline = world.CreatePipeline()
+//        .Term(EcsCompSystem)
+//        .Term<Rendering>()
+//        .Build();
+//
+//    world.RunPipeline(pipeline);
+//    // world.RunPipeline(pipeline);
+//
+//    CHECK(a == 50);
+//    CHECK(b == 50);
+//}

@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <array>
 #include <type_traits>
+#include <functional>
 
 #ifndef ECS_STATIC
 #if ECS_EXPORTS && (defined(_MSC_VER) || defined(__MINGW32__))
@@ -26,20 +27,6 @@
 
 namespace ECS
 {
-	typedef void* (*ecs_os_api_malloc_t)(size_t size);
-	typedef void (*ecs_os_api_free_t)(void* ptr);
-	typedef void* (*ecs_os_api_realloc_t)(void* ptr, size_t size);
-	typedef void* (*ecs_os_api_calloc_t)(size_t size);
-
-	struct EcsSystemAPI
-	{
-		ecs_os_api_malloc_t malloc_;
-		ecs_os_api_realloc_t realloc_;
-		ecs_os_api_calloc_t calloc_;
-		ecs_os_api_free_t free_;
-	};
-	extern EcsSystemAPI ecsSystemAPI;
-
 	using U8 = uint8_t;
 	using U16 = uint16_t;
 	using U32 = uint32_t;
@@ -47,6 +34,24 @@ namespace ECS
 	using I16 = int16_t;
 	using I32 = int32_t;
 	using I64 = int64_t;
+
+	typedef void* (*ecs_os_api_malloc_t)(size_t size);
+	typedef void (*ecs_os_api_free_t)(void* ptr);
+	typedef void* (*ecs_os_api_realloc_t)(void* ptr, size_t size);
+	typedef void* (*ecs_os_api_calloc_t)(size_t size);
+	typedef void (*ecs_os_api_thread_run)(void* ctx, void* stage, U64 pipeline);
+	typedef void (*ecs_os_api_thread_sync)(void* ptr);
+
+	struct EcsSystemAPI
+	{
+		ecs_os_api_malloc_t malloc_;
+		ecs_os_api_realloc_t realloc_;
+		ecs_os_api_calloc_t calloc_;
+		ecs_os_api_free_t free_;
+		ecs_os_api_thread_run thread_run_;
+		ecs_os_api_thread_sync thread_sync_;
+	};
+	extern EcsSystemAPI ecsSystemAPI;
 
 	// Container
 	template<typename Value>

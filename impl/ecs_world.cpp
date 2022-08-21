@@ -6,6 +6,7 @@
 #include "ecs_query.h"
 #include "ecs_observer.h"
 #include "ecs_pipeline.h"
+#include "ecs_stage.h"
 
 namespace ECS
 {
@@ -108,6 +109,9 @@ namespace ECS
 
 	const EntityID EcsCompSystem = ECS_ENTITY_ID(SystemComponent);
 
+	const U32 ECS_DEFINE_OBEJCT(WorldImpl) = 0x63632367;
+	const U32 ECS_DEFINE_OBEJCT(Stage) = 0x63632367;
+
 	////////////////////////////////////////////////////////////////////////////////
 	//// SystemAPI
 	////////////////////////////////////////////////////////////////////////////////
@@ -120,12 +124,12 @@ namespace ECS
 		return calloc(1, size);
 	}
 
-	void SetSystemDefaultAPI()
+	void DefaultECSSystemAPI(EcsSystemAPI& api)
 	{
-		ecsSystemAPI.malloc_ = malloc;
-		ecsSystemAPI.calloc_ = EcsSystemAPICalloc;
-		ecsSystemAPI.realloc_ = realloc;
-		ecsSystemAPI.free_ = free;
+		api.malloc_ = malloc;
+		api.calloc_ = EcsSystemAPICalloc;
+		api.realloc_ = realloc;
+		api.free_ = free;
 	}
 
 	void SetECSSystemAPI(const EcsSystemAPI& api)
@@ -998,11 +1002,12 @@ namespace ECS
 	{
 		if (isSystemInit == false)
 		{
-			SetSystemDefaultAPI();
+			DefaultECSSystemAPI(ecsSystemAPI);
 			isSystemInit = true;
 		}
 
 		WorldImpl* world = ECS_NEW_OBJECT<WorldImpl>();
+		ECS_INIT_OBJECT(world, WorldImpl);
 
 		world->pendingTables = ECS_NEW_OBJECT<Util::SparseArray<EntityTable*>>();
 		world->pendingBuffer = ECS_NEW_OBJECT<Util::SparseArray<EntityTable*>>();
@@ -1098,60 +1103,6 @@ namespace ECS
 		return true;
 	}
 
-	I32 GetStageCount(WorldImpl* world)
-	{
-		return 0;
-	}
-
-	void SetStageCount(WorldImpl* world, I32 stageCount)
-	{
-		ECS_ASSERT(world != nullptr);
-		ECS_ASSERT((stageCount > 1 && !world->isFini) || stageCount <= 1);
-
-		if (stageCount == world->stageCount)
-			return;
-
-		// Fini existing stages
-		if (world->stageCount > 0 && stageCount != world->stageCount)
-		{
-			for (int i = 0; i < world->stageCount; i++)
-			{
-				Stage* stage = &world->stages[i];
-				ECS_ASSERT(stage->thread == 0);
-				FiniStage(world, stage);
-			}
-
-			ECS_FREE(world->stages);
-		}
-
-		world->stages = nullptr;
-		world->stageCount = stageCount;
-
-		// Init new stages
-		if (stageCount > 0)
-		{
-			world->stages = ECS_MALLOC_T_N(Stage, stageCount);
-			for (int i = 0; i < stageCount; i++)
-			{
-				Stage* stage = &world->stages[i];
-				InitStage(world, stage);
-				stage->id = i;
-			}
-		}
-	}
-
-	void InitStage(WorldImpl* world, Stage* stage)
-	{
-		ECS_NEW_PLACEMENT(stage, Stage);
-		stage->async = false;
-		stage->world = world;
-	}
-
-	void FiniStage(WorldImpl* world, Stage* stage)
-	{
-		stage->~Stage();
-	}
-
 	void SetThreads(WorldImpl* world, I32 threads, bool startThreads)
 	{
 		I32 stageCount = GetStageCount(world);
@@ -1179,17 +1130,13 @@ namespace ECS
 		FlushDefer(world);
 	}
 
-	Stage* GetStage(WorldImpl* world, I32 stageID)
+	void BeginReadonly(WorldImpl* world)
 	{
-		ECS_ASSERT(world != nullptr);
-		ECS_ASSERT(world->stageCount > stageID);
-		return &world->stages[stageID];
 	}
 
-	Stage* GetStageFromWorld(WorldImpl* world)
+	void EndReadonly(WorldImpl* world)
 	{
-		ECS_ASSERT(world != nullptr);
-		ECS_ASSERT(world->stageCount <= 1 || !world->isReadonly);
-		return &world->stages[0];
+
 	}
+
 }

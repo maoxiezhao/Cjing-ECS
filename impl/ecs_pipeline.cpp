@@ -4,6 +4,7 @@
 #include "ecs_table.h"
 #include "ecs_query.h"
 #include "ecs_system.h"
+#include "ecs_stage.h"
 
 namespace ECS
 {
@@ -73,12 +74,12 @@ namespace ECS
 		if (pipeline->query->matchingCount == pipeline->matchCount)
 			return false;
 
-		bool multiThreaded = false;
-		bool first = true;
-
 		SystemComponent* lastSys = nullptr;
 		Vector<PipelineOperation> ops;
 		PipelineOperation* op = nullptr;
+
+		bool multiThreaded = false;
+		bool first = true;
 
 		// Traverse all systems in order, check all components from system
 		// If they dont have a conflict of writing, merge these systems into the same PipelineOperation
@@ -99,11 +100,16 @@ namespace ECS
 					multiThreaded = system->multiThreaded;
 					first = false;
 				}
+				else if (system->multiThreaded != multiThreaded)
+				{
+					multiThreaded = system->multiThreaded;
+					needMerge = true;
+				}
 
 				if (needMerge)
 				{
-					// TODO
-					ECS_ASSERT(false);
+					needMerge = false;
+					op = nullptr;
 				}
 
 				if (op == nullptr)
@@ -144,7 +150,7 @@ namespace ECS
 			for (int i = 0; i < pipeline->iterCount; i++)
 				pipeline->iters[i] = GetQueryIterator(pipeline->query);
 
-			pipeline->curOp = &pipeline->ops.front();
+			pipeline->curOp = !pipeline->ops.empty() ? &pipeline->ops.front() : nullptr;
 		}
 		else if (rebuild)
 		{
@@ -156,7 +162,13 @@ namespace ECS
 			pipeline->curOp++;
 		}
 
-		return true;
+		return false;
+	}
+
+	void WaitForWorkerSync(WorldImpl* world)
+	{
+		if (ecsSystemAPI.thread_sync_ != nullptr)
+			ecsSystemAPI.thread_sync_(&world->threadCtx);
 	}
 
 	void WorkerProgress(WorldImpl* world, EntityID pipeline)
@@ -174,11 +186,42 @@ namespace ECS
 		if (pipelineComp->ops.empty())
 			return;
 
-		// Run pipeline
+		// Run pipeline in main thread
 		if (stageCount == 1)
 		{
 			Stage* stage = GetStage(world, 0);
-			RunPipeline(stage, pipeline);
+			RunPipelineThread(stage, pipeline);
+		}
+
+		// All threads run the pipeline in each targe stage
+		else
+		{
+			for (auto& op : pipelineComp->ops)
+			{
+				BeginReadonly(world);
+
+				for (int i = 0; i < stageCount; i++)
+				{
+					if (ecsSystemAPI.thread_run_ != nullptr)
+					{
+						ecsSystemAPI.thread_run_(&world->threadCtx, &world->stages[i], pipeline);
+					}
+					else
+					{
+						RunPipelineThread(&world->stages[i], pipeline);
+					}
+				}
+					
+				WaitForWorkerSync(world);
+				EndReadonly(world);
+
+				bool rebuild = UpdatePipeline(world, pipelineComp, false);
+				if (rebuild)
+				{
+					ECS_ASSERT(false);
+					return;
+				}
+			}
 		}
 	}
 
@@ -190,7 +233,67 @@ namespace ECS
 		WorkerProgress(world, pipeline);
 	}
 
-	void RunPipeline(Stage* stage, EntityID pipeline)
+	void SyncPipelineWorker(ObjectBase* obj)
+	{
+		auto world = GetWorld(obj);
+		I32 stageCount = GetStageCount(world);
+	}
+
+	void PipelineWorkerBegin(ObjectBase* obj)
+	{
+		WorldImpl* world = GetWorld(obj);
+		ECS_ASSERT(world != nullptr);
+
+		I32 stageCount = GetStageCount(world);
+		if (stageCount == 1)
+		{
+			BeginReadonly(world);
+		}
+	}
+
+	void PipelineWorkerEnd(ObjectBase* obj)
+	{
+		WorldImpl* world = GetWorld(obj);
+		ECS_ASSERT(world != nullptr);
+
+		I32 stageCount = GetStageCount(world);
+		if (stageCount == 1)
+		{
+			if (world->isReadonly)
+				EndReadonly(world);
+		}
+		else
+		{
+			SyncPipelineWorker(obj);
+		}
+	}
+
+	bool SyncPipelineWorkers(WorldImpl* world, PipelineComponent* pipeline)
+	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(pipeline != nullptr);
+
+		// Only main thread, do merge
+		I32 stageCount = GetStageCount(world);
+		if (stageCount == 1)
+		{
+			EndReadonly(world);
+			UpdatePipeline(world, pipeline, false);
+		}
+		// Sync all workers
+		else
+		{
+			SyncPipelineWorker(&world->base);
+		}
+
+		// Readonly begin again
+		if (stageCount == 1)
+			BeginReadonly(world);
+
+		return false;
+	}
+
+	void RunPipelineThread(Stage* stage, EntityID pipeline)
 	{
 		ECS_ASSERT(stage != nullptr);
 		ECS_ASSERT(stage->world != nullptr);
@@ -199,8 +302,13 @@ namespace ECS
 		ECS_ASSERT(pipelineComp != nullptr);
 		ECS_ASSERT(pipelineComp->query != nullptr);
 
+		I32 stageIndex = GetStageID(stage->threadCtx);
+		I32 stageCount = GetStageCount(stage->world);
+
+		// Workder begin
+		PipelineWorkerBegin(stage->threadCtx);
+
 		I32 countSinceMerge = 0;
-		I32 stageIndex = stage->id;
 
 		PipelineOperation* op = &pipelineComp->ops.front();
 		PipelineOperation* lastop = &pipelineComp->ops.back();
@@ -211,7 +319,8 @@ namespace ECS
 			for (int i = 0; i < it.count; i++)
 			{
 				// Run system in main thread (stageIndex == 0)
-				if (stageIndex == 0)
+				// Or system can run in multi threads
+				if (stageIndex == 0 || op->multiThreaded)
 				{
 					RunSystemInternal(
 						stage->world,
@@ -223,14 +332,22 @@ namespace ECS
 					);
 				}
 
-				// Op changed, need to sync
+				countSinceMerge++;
+
+				// Op changed or finished, sync worker and set the next pipeline operation
 				if (op != lastop && countSinceMerge == op->count)
 				{
-					ECS_ASSERT(false);
-					// TODO
+					countSinceMerge = 0;
+					SyncPipelineWorkers(stage->world, pipelineComp);
+
+					op = pipelineComp->curOp;
+					lastop = &pipelineComp->ops.back();
 				}
 			}
 		}
+
+		// Worker end
+		PipelineWorkerEnd(stage->threadCtx);
 	}
 
 	void InitPipelineComponent(WorldImpl* world)

@@ -69,6 +69,13 @@ namespace ECS
 		FiniIteratorCache(it.ptrs, ITERATOR_CACHE_MASK_PTRS, cache);
 	}
 
+	bool NextIterator(Iterator* it)
+	{
+		ECS_ASSERT(it != nullptr);
+		ECS_ASSERT(it->next != nullptr);
+		return it->next(it);
+	}
+
 	void SetIteratorVar(Iterator& it, I32 varID, const TableRange& range)
 	{
 		ECS_ASSERT(varID >= 0 && varID < ECS_TERM_CACHE_SIZE);
@@ -169,5 +176,88 @@ namespace ECS
 
 			IteratorPopulateTermData(world, iter, i, column, ptr, size);
 		}
+	}
+
+	void OffsetIterator(Iterator* it, I32 offset)
+	{
+		it->entities = &it->entities[offset];
+		for (int t = 0; t < it->termCount; t++)
+		{
+			void* ptr = it->ptrs[t];
+			if (ptr == nullptr)
+				continue;
+			
+			it->ptrs[t] = (U8*)ptr + offset * it->sizes[t];
+		}
+	}
+
+	bool WorkerNextInstanced(Iterator* it)
+	{
+		ECS_ASSERT(it != nullptr);
+		ECS_ASSERT(it->chainIter != nullptr);
+
+		I32 numWorker = it->priv.iter.worker.count;
+		I32 workerIndex = it->priv.iter.worker.index;
+		I32 perWorker = 0, first = 0;
+
+		// Traverse all chain iterator to get 
+		do
+		{
+			// Do next of source chain iterator
+			if (!it->chainIter->next(it->chainIter))
+				return false;
+
+			memcpy(it, it->chainIter, offsetof(Iterator, priv));
+
+			I32 count = (I32)it->count;
+			perWorker = count / numWorker;
+			first = perWorker * workerIndex;
+			
+			// If there is still left, let the previous workers execute one more
+			count -= perWorker * numWorker;
+			if (count > 0)
+			{
+				if (workerIndex < count)
+					perWorker++;
+				else
+					first += count;
+			}
+
+			if (perWorker == 0 && it->table == nullptr)
+				return workerIndex == 0;
+
+		} while (perWorker == 0);
+
+		// Offset iterator data for each worker
+		OffsetIterator(it, it->offset + first);
+
+		it->count = perWorker;
+		it->offset += first;
+
+		return true;
+	}
+
+	bool NextSplitWorkerIter(Iterator* it)
+	{
+		ECS_ASSERT(it != nullptr);
+		ECS_ASSERT(it->chainIter != nullptr);
+		ECS_ASSERT(it->next == NextSplitWorkerIter);
+
+		return WorkerNextInstanced(it);
+	}
+
+	Iterator GetSplitWorkerInterator(Iterator& it, I32 index, I32 count)
+	{
+		ECS_ASSERT(it.next != nullptr);
+		ECS_ASSERT(index >= 0 && index < count);
+		ECS_ASSERT(count > 0);
+
+		Iterator iter = {};
+		iter.world = it.world;
+		iter.chainIter = &it;
+		iter.next = NextSplitWorkerIter;
+		iter.priv.iter.worker.index = index;
+		iter.priv.iter.worker.count = count;		
+		return iter;
 	}
 }

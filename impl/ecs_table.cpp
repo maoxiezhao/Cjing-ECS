@@ -1519,7 +1519,7 @@ namespace ECS
 		if (Count() < 2)
 			return;
 
-		TableQuickSort(this, 0, Count() - 1, compare);
+		TableQuickSort(this, 0, (I32)Count() - 1, compare);
 	}
 
 	void EntityTable::SwapRows(I32 src, I32 dst)

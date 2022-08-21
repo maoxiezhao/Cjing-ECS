@@ -1,3 +1,5 @@
+#pragma once
+
 #include "ecs_def.h"
 
 namespace ECS
@@ -8,4 +10,6 @@ namespace ECS
 	void ValidateInteratorCache(Iterator& it);
 	void IteratorPopulateData(WorldImpl* world, Iterator& iter, EntityTable* table, I32 offset, size_t* sizes, void** ptrs);
 	void FiniIterator(Iterator& it);
+	bool NextIterator(Iterator* it);
+	Iterator GetSplitWorkerInterator(Iterator& it, I32 index, I32 count);
 }

@@ -2,6 +2,8 @@
 #include "ecs_priv_types.h"
 #include "ecs_world.h"
 #include "ecs_query.h"
+#include "ecs_stage.h"
+#include "ecs_iter.h"
 
 namespace ECS
 {
@@ -28,6 +30,7 @@ namespace ECS
 			sysComponent->action = desc.action;
 			sysComponent->invoker = desc.invoker;
 			sysComponent->invokerDeleter = desc.invokerDeleter;
+			sysComponent->multiThreaded = desc.multiThreaded;
 
 			QueryImpl* queryInfo = CreateQuery(world, desc.query);
 			if (queryInfo == nullptr)
@@ -45,8 +48,10 @@ namespace ECS
 		if (sysComponent == nullptr)
 			return;
 
-		return RunSystemInternal(world, GetStageFromWorld(world), entity, sysComponent, 0, 0);
+		return RunSystemInternal(world, GetStageFromWorld(&world->base), entity, sysComponent, 0, 0);
 	}
+
+
 
 	void RunSystemInternal(WorldImpl* world, Stage* stage, EntityID entity, SystemComponent* system, I32 stageIndex, I32 stageCount)
 	{
@@ -57,10 +62,28 @@ namespace ECS
 
 		BeginDefer(world);
 
-		Iterator iter = GetQueryIterator(system->query);
-		iter.invoker = system->invoker;
-		while (NextQueryIter(&iter))
-			action(&iter);
+		Iterator workerIter = {};
+		Iterator queryIter = GetQueryIterator(system->query);
+		Iterator* iter = &queryIter;
+
+		// If current system support multithread
+		if (stageCount > 1 && system->multiThreaded)
+		{
+			workerIter = GetSplitWorkerInterator(queryIter, stageIndex, stageCount);
+			iter = &workerIter;
+		}
+
+		iter->invoker = system->invoker;
+		if (iter == &queryIter)
+		{
+			while (NextQueryIter(iter))
+				action(iter);
+		}
+		else
+		{
+			while (NextIterator(iter))
+				action(iter);
+		}
 
 		EndDefer(world);
 	}

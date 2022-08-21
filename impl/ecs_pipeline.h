@@ -1,9 +1,12 @@
+#pragma once
+
 #include "ecs_def.h"
 
 namespace ECS
 {
 	struct Stage;
 	struct SystemComponent;
+	struct ObjectBase;
 
 	extern EntityID ECS_ENTITY_ID(PipelineComponent);
 
@@ -11,7 +14,6 @@ namespace ECS
 	{
 		I32 count;
 		bool multiThreaded;
-
 	};
 
 	struct PipelineComponent
@@ -29,5 +31,5 @@ namespace ECS
 	void InitPipelineComponent(WorldImpl* world);
 	EntityID InitPipeline(WorldImpl* world, const PipelineCreateDesc& desc);
 	void RunPipeline(WorldImpl* world, EntityID pipeline);
-	void RunPipeline(Stage* stage, EntityID pipeline);
+	void RunPipelineThread(Stage* stage, EntityID pipeline);
 }
