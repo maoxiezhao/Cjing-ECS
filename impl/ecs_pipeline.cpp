@@ -200,25 +200,32 @@ namespace ECS
 			{
 				BeginReadonly(world);
 
-				for (int i = 0; i < stageCount; i++)
+				if (op.multiThreaded)
 				{
-					if (ecsSystemAPI.thread_run_ != nullptr)
+					for (int i = 0; i < stageCount; i++)
 					{
-						ecsSystemAPI.thread_run_(&world->threadCtx, &world->stages[i], pipeline);
+						if (ecsSystemAPI.thread_run_ != nullptr)
+							ecsSystemAPI.thread_run_(&world->threadCtx, &world->stages[i], pipeline);
+						else
+							RunPipelineThread(&world->stages[i], pipeline);
 					}
-					else
-					{
-						RunPipelineThread(&world->stages[i], pipeline);
-					}
+
+					WaitForWorkerSync(world);
 				}
-					
-				WaitForWorkerSync(world);
+				else
+				{
+					RunPipelineThread(&world->stages[0], pipeline);
+				}
+
 				EndReadonly(world);
 
+				// System may be chagned, update pipeline
 				bool rebuild = UpdatePipeline(world, pipelineComp, false);
 				if (rebuild)
 				{
 					ECS_ASSERT(false);
+					pipelineComp = (PipelineComponent*)GetComponent(world, pipeline, ECS_ENTITY_ID(PipelineComponent));
+					// TODO
 					return;
 				}
 			}

@@ -4,6 +4,7 @@
 #include "ecs_query.h"
 #include "ecs_iter.h"
 #include "ecs_observer.h"
+#include "ecs_stage.h"
 
 namespace ECS
 {
@@ -1015,6 +1016,9 @@ namespace ECS
 			world->pendingTables = world->pendingBuffer;
 			world->pendingBuffer = nullptr;
 
+			// Defer all operations, when we emit event to change states of table
+			BeginDefer(&world->base);
+
 			for (size_t i = 0; i < pendingCount; i++)
 			{
 				EntityTable* table = *tables->GetByDense(i);
@@ -1033,6 +1037,9 @@ namespace ECS
 			}
 
 			tables->Clear();
+
+			EndDefer(&world->base);
+
 			world->pendingBuffer = tables;
 
 		} while (pendingCount = world->pendingTables->Count());

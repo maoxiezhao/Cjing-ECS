@@ -51,8 +51,6 @@ namespace ECS
 		return RunSystemInternal(world, GetStageFromWorld(&world->base), entity, sysComponent, 0, 0);
 	}
 
-
-
 	void RunSystemInternal(WorldImpl* world, Stage* stage, EntityID entity, SystemComponent* system, I32 stageIndex, I32 stageCount)
 	{
 		SystemAction action = system->action;
@@ -60,7 +58,11 @@ namespace ECS
 		ECS_ASSERT(system->query != nullptr);
 		ECS_ASSERT(system->invoker != nullptr);
 
-		BeginDefer(world);
+		ObjectBase* threadCtx = &world->base;
+		if (stage)
+			threadCtx = &stage->base;
+
+		BeginDefer(threadCtx);
 
 		Iterator workerIter = {};
 		Iterator queryIter = GetQueryIterator(system->query);
@@ -85,7 +87,7 @@ namespace ECS
 				action(iter);
 		}
 
-		EndDefer(world);
+		EndDefer(threadCtx);
 	}
 
 	void InitSystemComponent(WorldImpl* world)

@@ -110,7 +110,7 @@ namespace ECS
 	const EntityID EcsCompSystem = ECS_ENTITY_ID(SystemComponent);
 
 	const U32 ECS_DEFINE_OBEJCT(WorldImpl) = 0x63632367;
-	const U32 ECS_DEFINE_OBEJCT(Stage) = 0x63632367;
+	const U32 ECS_DEFINE_OBEJCT(Stage) = 0x63632368;
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// SystemAPI
@@ -124,7 +124,7 @@ namespace ECS
 		return calloc(1, size);
 	}
 
-	void DefaultECSSystemAPI(EcsSystemAPI& api)
+	void DefaultSystemAPI(EcsSystemAPI& api)
 	{
 		api.malloc_ = malloc;
 		api.calloc_ = EcsSystemAPICalloc;
@@ -132,7 +132,7 @@ namespace ECS
 		api.free_ = free;
 	}
 
-	void SetECSSystemAPI(const EcsSystemAPI& api)
+	void SetSystemAPI(const EcsSystemAPI& api)
 	{
 		if (isSystemInit == false)
 		{
@@ -365,39 +365,30 @@ namespace ECS
 		return ptr ? ptr->name : nullptr;
 	}
 
-	bool DeferDeleteEntity(WorldImpl* world, EntityID entity)
-	{
-		// TODO
-		if (world->defer > 0)
-		{
-			// TODO: Add a job into the defer queue
-			return true;
-		}
-
-		return false;
-	}
-
 	void DeleteEntity(WorldImpl* world, EntityID entity)
 	{
 		ECS_ASSERT(entity != INVALID_ENTITY);
 
-		if (DeferDeleteEntity(world, entity))
+		auto stage = GetStageFromWorld(world);
+		if (DeferDelete(world, stage, entity))
 			return;
 
 		EntityInfo* entityInfo = world->entityPool.Get(entity);
-		if (entityInfo == nullptr)
-			return;
+		if (entityInfo != nullptr)
+		{
+			U64 tableID = 0;
+			if (entityInfo->table)
+				tableID = entityInfo->table->tableID;
 
-		U64 tableID = 0;
-		if (entityInfo->table)
-			tableID = entityInfo->table->tableID;
+			if (tableID > 0 && world->tablePool.CheckExsist(tableID))
+				entityInfo->table->DeleteEntity(entityInfo->row, true);
 
-		if (tableID > 0 && world->tablePool.CheckExsist(tableID))
-			entityInfo->table->DeleteEntity(entityInfo->row, true);
+			entityInfo->row = 0;
+			entityInfo->table = nullptr;
+			world->entityPool.Remove(entity);
+		}
 
-		entityInfo->row = 0;
-		entityInfo->table = nullptr;
-		world->entityPool.Remove(entity);
+		EndDefer(&world->base);
 	}
 
 	const EntityType& GetEntityType(WorldImpl* world, EntityID entity)
@@ -665,6 +656,10 @@ namespace ECS
 		{
 			AddComponentForEntity(world, entity, info, compID);
 
+			// Flush defer queue, so we can fetch a stable component
+			EndDefer(&world->base);
+			BeginDefer(&world->base);
+
 			ECS_ASSERT(info != nullptr);
 			ECS_ASSERT(info->table != nullptr);
 			ret = GetComponentFromTable(world , *info->table, info->row, compID);
@@ -683,9 +678,16 @@ namespace ECS
 
 	void* GetOrCreateMutableByID(WorldImpl* world, EntityID entity, EntityID compID, bool* added)
 	{
+		auto stage = GetStageFromWorld(world);
+		void* outValue;
+		if (DeferSet(world, stage, entity, EcsOpMut, compID, 0, nullptr, &outValue))
+			return outValue;
+
 		EntityInfo* info = world->entityPool.Ensure(entity);
 		void* ret = GetOrCreateMutable(world, entity, compID, info, added);
 		ECS_ASSERT(ret != nullptr);
+
+		EndDefer(&world->base);
 		return ret;
 	}
 
@@ -701,7 +703,14 @@ namespace ECS
 	{
 		ECS_ASSERT(IsEntityValid(world, entity));
 		ECS_ASSERT(IsCompIDValid(compID));
+	
+		Stage* stage = GetStageFromWorld(world);
+		if (DeferAddRemove(world, stage, entity, EcsOpAdd, compID))
+			return;
+		
 		AddComponentForEntity(world, entity, compID);
+
+		EndDefer(&world->base);
 	}
 
 	void RemoveComponent(WorldImpl* world, EntityID entity, EntityID compID)
@@ -709,13 +718,22 @@ namespace ECS
 		ECS_ASSERT(IsEntityValid(world, entity));
 		ECS_ASSERT(IsCompIDValid(compID));
 
+		Stage* stage = GetStageFromWorld(world);
+		if (DeferAddRemove(world, stage, entity, EcsOpRemove, compID))
+			return;
+
 		EntityInfo* info = world->entityPool.Get(entity);
 		if (info == nullptr || info->table == nullptr)
+		{
+			EndDefer(&world->base);
 			return;
+		}
 
 		EntityTableDiff diff = {};
 		EntityTable* newTable = TableTraverseRemove(world, info->table, compID, diff);
 		CommitTables(world, entity, info, newTable, diff, true);
+
+		EndDefer(&world->base);
 	}
 
 	void* GetComponent(WorldImpl* world, EntityID entity, EntityID compID)
@@ -758,6 +776,11 @@ namespace ECS
 	void SetComponent(WorldImpl* world, EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove)
 	{
 		EntityInfo* info = world->entityPool.Ensure(entity);
+
+		auto stage = GetStageFromWorld(world);
+		if (DeferSet(world, stage, entity, EcsOpSet, compID, size, ptr, nullptr))
+			return;
+
 		void* dst = GetOrCreateMutable(world, entity, compID, info, NULL);
 		ECS_ASSERT(dst != NULL);
 		if (ptr)
@@ -792,6 +815,8 @@ namespace ECS
 
 		// Table column dirty
 		info->table->SetColumnDirty(compID);
+
+		EndDefer(&world->base);
 	}
 
 	void Instantiate(WorldImpl* world, EntityID entity, EntityID prefab)
@@ -1002,7 +1027,7 @@ namespace ECS
 	{
 		if (isSystemInit == false)
 		{
-			DefaultECSSystemAPI(ecsSystemAPI);
+			DefaultSystemAPI(ecsSystemAPI);
 			isSystemInit = true;
 		}
 
@@ -1045,10 +1070,14 @@ namespace ECS
 
 	void FiniWorld(WorldImpl* world)
 	{
+		ECS_ASSERT(!world->isReadonly);
+		ECS_ASSERT(!world->isFini);
+		ECS_ASSERT(world->stages[0].defer == 0);
+
 		world->isFini = true;
 
 		// Begin defer to discard all operations (Add/Delete/Dtor)
-		BeginDefer(world);
+		BeginDefer(&world->base);
 
 		// Free all tables, neet to skip id 0
 		size_t tabelCount = world->tablePool.Count();
@@ -1073,6 +1102,9 @@ namespace ECS
 			ECS_FREE(cur);
 		}
 
+		// Purge deferred operations
+		PurgeDefer(world);
+
 		// Fini all queries
 		FiniQueries(world);
 
@@ -1093,16 +1125,6 @@ namespace ECS
 		ECS_DELETE_OBJECT(world);
 	}
 
-	bool FlushDefer(WorldImpl* world)
-	{
-		if (--world->defer > 0)
-			return false;
-
-		// TODO
-		// Flush defer queue
-		return true;
-	}
-
 	void SetThreads(WorldImpl* world, I32 threads, bool startThreads)
 	{
 		I32 stageCount = GetStageCount(world);
@@ -1117,26 +1139,4 @@ namespace ECS
 			}
 		}
 	}
-
-	void BeginDefer(WorldImpl* world)
-	{
-		// TODO
-		world->defer++;
-	}
-
-	void EndDefer(WorldImpl* world)
-	{
-		// TODO
-		FlushDefer(world);
-	}
-
-	void BeginReadonly(WorldImpl* world)
-	{
-	}
-
-	void EndReadonly(WorldImpl* world)
-	{
-
-	}
-
 }

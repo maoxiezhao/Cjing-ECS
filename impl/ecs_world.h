@@ -63,15 +63,10 @@ namespace ECS
 	//// World
 	////////////////////////////////////////////////////////////////////////////////
 
-	void SetThreads(WorldImpl* world, I32 threads, bool startThreads);
-	void BeginDefer(WorldImpl* world);
-	void EndDefer(WorldImpl* world);
-	void BeginReadonly(WorldImpl* world);
-	void EndReadonly(WorldImpl* world);
-
 	// World
-	void SetECSSystemAPI(const EcsSystemAPI& api);
-	void DefaultECSSystemAPI(EcsSystemAPI& api);
+	void SetSystemAPI(const EcsSystemAPI& api);
+	void DefaultSystemAPI(EcsSystemAPI& api);
+	void SetThreads(WorldImpl* world, I32 threads, bool startThreads);
 
 	WorldImpl* InitWorld();
 	void FiniWorld(WorldImpl* world);

@@ -350,6 +350,30 @@ namespace ECS
 	//// WorldImpl
 	////////////////////////////////////////////////////////////////////////////////
 
+	enum DeferOperationKind 
+	{
+		EcsOpNew,
+		EcsOpAdd,
+		EcsOpRemove,
+		EcsOpSet,
+		EcsOpMut,
+		EcsOpModified,
+		EcsOpDelete,
+		EcsOpClear,
+		EcsOpOnDeleteAction,
+		EcsOpEnable,
+		EcsOpDisable
+	};
+
+	struct DeferOperation
+	{
+		EntityID id;
+		DeferOperationKind kind;
+		EntityID entity;
+		size_t size;
+		void* value;
+	};
+
 	struct Stage
 	{
 		// Base object info
@@ -362,6 +386,12 @@ namespace ECS
 		void* thread = 0;	
 		ObjectBase* threadCtx = nullptr;
 		WorldImpl* world = nullptr;
+
+		// Deferred
+		I32 defer = 0;
+		bool deferSuspend = false;
+		Vector<DeferOperation> deferQueue;
+		Util::Stack deferStack;
 	};
 
 	struct WorldImpl
@@ -413,6 +443,5 @@ namespace ECS
 		// Status
 		bool isReadonly = false;
 		bool isFini = false;
-		U32 defer = 0;
 	};
 }

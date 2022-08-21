@@ -130,6 +130,84 @@ namespace Util
 		I32 count = 0;
 	};
 
+	struct Stackpage 
+	{
+		void* data;
+		struct Stackpage* next;
+		size_t sp;
+	};
+
+#define ECS_STACK_PAGE_SIZE (4096)
+#define ECS_ALIGN(size, alignment) (size_t)((((((size_t)size) - 1) / ((size_t)alignment)) + 1) * ((size_t)alignment))
+#define ECS_OFFSET(o, offset) reinterpret_cast<void*>((reinterpret_cast<uintptr_t>(o)) + (static_cast<uintptr_t>(offset)))
+
+	struct Stack 
+	{
+		Stackpage first;
+		Stackpage* cur = nullptr;
+
+		void Init()
+		{
+			memset(&first, 0, sizeof(Stackpage));
+			cur = &first;
+		}
+
+		void Uninit()
+		{
+			Stackpage* next, *cur = &first;
+			do {
+				next = cur->next;
+				if (cur == &first)
+					ECS_FREE(cur->data);
+				else
+					ECS_FREE(cur);
+			} 
+			while ((cur = next));
+		}
+
+		void Reset()
+		{
+			cur = &first;
+			first.sp = 0;
+		}
+
+		void* Alloc(size_t size, size_t align)
+		{
+			Stackpage* page = cur;
+			if (page == &first && page->data == nullptr)
+				page->data = ECS_MALLOC(ECS_STACK_PAGE_SIZE);
+
+			size_t sp = ECS_ALIGN(page->sp, align);
+			size_t newSp = sp + size;
+
+			if (newSp > ECS_STACK_PAGE_SIZE)
+			{
+				if (size > ECS_STACK_PAGE_SIZE)
+					ECS_ASSERT(false);
+
+				if (page->next)
+				{
+					page = page->next;
+				}
+				else
+				{
+					size_t pageOffset = ECS_ALIGN(sizeof(Stackpage), 16);
+					Stackpage* newPage = (Stackpage*)ECS_MALLOC(pageOffset + ECS_STACK_PAGE_SIZE);
+					newPage->data = newPage + pageOffset;
+					newPage->next = nullptr;
+
+					page = page->next = newPage;
+				}
+				sp = 0;
+				newSp = size;
+				cur = page;
+			}
+
+			page->sp = newSp;
+			return ECS_OFFSET(page->data, sp);
+		}
+	};
+
     class StorageVector
     {
     private:
