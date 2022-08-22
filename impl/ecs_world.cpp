@@ -251,7 +251,7 @@ namespace ECS
 
 	EntityID CreateNewEntityID(WorldImpl* world)
 	{
-		Stage* stage = GetStageFromWorld(world);
+		Stage* stage = GetStageFromWorld(&world);
 		if (world->isMultiThreaded)
 		{
 			ECS_ASSERT(world->lastID < UINT_MAX);
@@ -356,7 +356,7 @@ namespace ECS
 	EntityID CreateEntityID(WorldImpl* world, const EntityCreateDesc& desc)
 	{
 		ECS_ASSERT(world != nullptr);
-		Stage* stage = GetStageFromWorld(world);
+		Stage* stage = GetStageFromWorld(&world);
 
 		const char* name = desc.name;
 		bool isNewEntity = false;
@@ -431,7 +431,7 @@ namespace ECS
 	{
 		ECS_ASSERT(entity != INVALID_ENTITY);
 
-		auto stage = GetStageFromWorld(world);
+		auto stage = GetStageFromWorld(&world);
 		if (DeferDelete(world, stage, entity))
 			return;
 
@@ -450,7 +450,7 @@ namespace ECS
 			world->entityPool.Remove(entity);
 		}
 
-		EndDefer(&world->base);
+		EndDefer(world);
 	}
 
 	const EntityType& GetEntityType(WorldImpl* world, EntityID entity)
@@ -719,8 +719,8 @@ namespace ECS
 			AddComponentForEntity(world, entity, info, compID);
 
 			// Flush defer queue, so we can fetch a stable component
-			EndDefer(&world->base);
-			BeginDefer(&world->base);
+			EndDefer(world);
+			BeginDefer(world);
 
 			ECS_ASSERT(info != nullptr);
 			ECS_ASSERT(info->table != nullptr);
@@ -740,7 +740,7 @@ namespace ECS
 
 	void* GetOrCreateMutableByID(WorldImpl* world, EntityID entity, EntityID compID, bool* added)
 	{
-		auto stage = GetStageFromWorld(world);
+		auto stage = GetStageFromWorld(&world);
 		void* outValue;
 		if (DeferSet(world, stage, entity, EcsOpMut, compID, 0, nullptr, &outValue))
 			return outValue;
@@ -749,7 +749,7 @@ namespace ECS
 		void* ret = GetOrCreateMutable(world, entity, compID, info, added);
 		ECS_ASSERT(ret != nullptr);
 
-		EndDefer(&world->base);
+		EndDefer(world);
 		return ret;
 	}
 
@@ -766,13 +766,13 @@ namespace ECS
 		ECS_ASSERT(IsEntityValid(world, entity));
 		ECS_ASSERT(IsCompIDValid(compID));
 	
-		Stage* stage = GetStageFromWorld(world);
+		Stage* stage = GetStageFromWorld(&world);
 		if (DeferAddRemoveID(world, stage, entity, EcsOpAdd, compID))
 			return;
 		
 		AddComponentForEntity(world, entity, compID);
 
-		EndDefer(&world->base);
+		EndDefer(world);
 	}
 
 	void RemoveComponent(WorldImpl* world, EntityID entity, EntityID compID)
@@ -780,14 +780,14 @@ namespace ECS
 		ECS_ASSERT(IsEntityValid(world, entity));
 		ECS_ASSERT(IsCompIDValid(compID));
 
-		Stage* stage = GetStageFromWorld(world);
+		Stage* stage = GetStageFromWorld(&world);
 		if (DeferAddRemoveID(world, stage, entity, EcsOpRemove, compID))
 			return;
 
 		EntityInfo* info = world->entityPool.Get(entity);
 		if (info == nullptr || info->table == nullptr)
 		{
-			EndDefer(&world->base);
+			EndDefer(world);
 			return;
 		}
 
@@ -795,7 +795,7 @@ namespace ECS
 		EntityTable* newTable = TableTraverseRemove(world, info->table, compID, diff);
 		CommitTables(world, entity, info, newTable, diff, true);
 
-		EndDefer(&world->base);
+		EndDefer(world);
 	}
 
 	void* GetComponent(WorldImpl* world, EntityID entity, EntityID compID)
@@ -839,7 +839,7 @@ namespace ECS
 	{
 		EntityInfo* info = world->entityPool.Ensure(entity);
 
-		auto stage = GetStageFromWorld(world);
+		auto stage = GetStageFromWorld(&world);
 		if (DeferSet(world, stage, entity, EcsOpSet, compID, size, ptr, nullptr))
 			return;
 
@@ -878,7 +878,7 @@ namespace ECS
 		// Table column dirty
 		info->table->SetColumnDirty(compID);
 
-		EndDefer(&world->base);
+		EndDefer(world);
 	}
 
 	void Instantiate(WorldImpl* world, EntityID entity, EntityID prefab)
@@ -1139,7 +1139,7 @@ namespace ECS
 		world->isFini = true;
 
 		// Begin defer to discard all operations (Add/Delete/Dtor)
-		BeginDefer(&world->base);
+		BeginDefer(world);
 
 		// Free all tables, neet to skip id 0
 		size_t tabelCount = world->tablePool.Count();

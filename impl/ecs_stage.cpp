@@ -30,28 +30,24 @@ namespace ECS
 		return &world->stages[stageID];
 	}
 
-	Stage* GetStageFromWorld(ObjectBase* threadCtx)
+	Stage* GetStageFromWorld(WorldImpl** world)
 	{
-		ECS_ASSERT(threadCtx != nullptr);
+		ObjectBase* threadCtx = &(*world)->base;
 		if (ECS_CHECK_OBJECT(threadCtx, WorldImpl))
 		{
 			WorldImpl* world = (WorldImpl*)threadCtx;
 			ECS_ASSERT(world->stageCount <= 1 || !world->isReadonly);
 			return &world->stages[0];
 		}
-		else if(ECS_CHECK_OBJECT(threadCtx, Stage))
+		else if (ECS_CHECK_OBJECT(threadCtx, Stage))
 		{
 			Stage* stage = (Stage*)threadCtx;
+			*world = stage->world;
 			return stage;
 		}
 
 		ECS_ASSERT(false);
 		return nullptr;
-	}
-
-	Stage* GetStageFromWorld(WorldImpl* threadCtx)
-	{
-		return GetStageFromWorld(&threadCtx->base);
 	}
 
 	WorldImpl* GetWorld(ObjectBase* threadCtx)
@@ -130,17 +126,17 @@ namespace ECS
 		}
 	}
 
-	void BeginDefer(ObjectBase* threadCtx)
+	void BeginDefer(WorldImpl* world)
 	{
-		Stage* stage = GetStageFromWorld(threadCtx);
+		Stage* stage = GetStageFromWorld(&world);
 		if (stage->deferSuspend)
 			return;
 		stage->defer++;
 	}
 
-	void EndDefer(ObjectBase* threadCtx)
+	void EndDefer(WorldImpl* world)
 	{
-		Stage* stage = GetStageFromWorld(threadCtx);
+		Stage* stage = GetStageFromWorld(&world);
 		if (stage->deferSuspend)
 			return;
 
@@ -157,7 +153,6 @@ namespace ECS
 			stage->deferStack = Util::Stack();
 			stage->deferStack.Init();
 
-			WorldImpl* world = GetWorld(threadCtx);
 			for (const auto& op : deferQueue)
 			{
 				EntityID entity = op.entity;
@@ -216,7 +211,7 @@ namespace ECS
 		{
 			Stage* stage = &world->stages[i];
 			ECS_ASSERT(stage->defer == 0);
-			BeginDefer(&stage->base);
+			BeginDefer((WorldImpl*)stage);
 		}
 
 		world->isReadonly = true;
@@ -229,7 +224,7 @@ namespace ECS
 	{
 		if (ECS_CHECK_OBJECT(threadCtx, Stage))
 		{
-			EndDefer(threadCtx);
+			EndDefer((WorldImpl*)threadCtx);
 		}
 		else
 		{
@@ -238,7 +233,7 @@ namespace ECS
 			for (int i = 0; i < stageCount; i++)
 			{
 				Stage* stage = &world->stages[i];
-				EndDefer(&stage->base);
+				EndDefer((WorldImpl*)stage);
 			}
 		}
 	}
@@ -268,7 +263,7 @@ namespace ECS
 		ECS_ASSERT(world != nullptr);
 		ECS_ASSERT(state != nullptr);
 
-		Stage* stage = GetStageFromWorld(world);
+		Stage* stage = GetStageFromWorld(&world);
 		bool isReadonly = world->isReadonly;
 		bool isDeferred = stage->defer > 0;
 		if (!isReadonly && !isDeferred)
@@ -298,7 +293,7 @@ namespace ECS
 		ECS_ASSERT(world != nullptr);
 		ECS_ASSERT(state != nullptr);
 
-		Stage* stage = GetStageFromWorld(world);
+		Stage* stage = GetStageFromWorld(&world);
 
 		if (!state->isReadonly && !state->isDeferred)
 			return;

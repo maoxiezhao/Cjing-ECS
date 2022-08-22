@@ -348,8 +348,7 @@ TEST_CASE("Pipeline+JobSystem", "ECS")
         .Kind<Rendering>()
         .MultiThread(true)
         .ForEach([&](ECS::Entity entity, VelocityComponent& vel) {
-            AtomicIncrement(&a);
-            
+            AtomicIncrement(&a);        
         });
 
     auto system2 = world.CreateSystem<VelocityComponent>()
@@ -362,7 +361,7 @@ TEST_CASE("Pipeline+JobSystem", "ECS")
     auto system3 = world.CreateSystem<VelocityComponent>()
         .Kind<Rendering>()
         .ForEach([&](ECS::Entity entity, VelocityComponent& vel) {
-            c++;
+            c = a + b;
         });
 
     auto pipeline = world.CreatePipeline()

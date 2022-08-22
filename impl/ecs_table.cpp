@@ -1017,7 +1017,7 @@ namespace ECS
 			world->pendingBuffer = nullptr;
 
 			// Defer all operations, when we emit event to change states of table
-			BeginDefer(&world->base);
+			BeginDefer(world);
 
 			for (size_t i = 0; i < pendingCount; i++)
 			{
@@ -1038,7 +1038,7 @@ namespace ECS
 
 			tables->Clear();
 
-			EndDefer(&world->base);
+			EndDefer(world);
 
 			world->pendingBuffer = tables;
 

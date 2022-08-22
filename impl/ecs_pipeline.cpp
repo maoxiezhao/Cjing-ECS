@@ -62,9 +62,65 @@ namespace ECS
 		return &systems[iter->offset];
 	}
 
-	bool CheckTermsMerged(Filter* filter)
+	enum ComponentWriteState {
+		NotWritten = 0,
+		WriteToStage,
+	};
+
+	struct WriteComponentState
 	{
+		Map<ComponentWriteState> components;
+	};
+
+	ComponentWriteState GetComponentWriteState(WriteComponentState& state, EntityID compID)
+	{
+		auto it = state.components.find(compID);
+		if (it != state.components.end())
+			return it->second;
+		return NotWritten;
+	}
+
+	void SetComponentWriteState(WriteComponentState& state, EntityID compID, ComponentWriteState value)
+	{
+		state.components[compID] = value;
+	}
+
+	bool CheckTermMerged(Term* term, WriteComponentState& writeState)
+	{
+		// Check whether there is a read-write conflict between components
+		ComponentWriteState state = GetComponentWriteState(writeState, term->compID);
+		switch (term->inout)
+		{
+		case InOutDefault:
+		case InOut:
+		case In:
+			if (state == WriteToStage)	// Write conflict
+				return true;
+			break;
+		default:
+			break;
+		}
+
+		switch (term->inout)
+		{
+		case InOutDefault:
+		case InOut:
+		case Out:
+			SetComponentWriteState(writeState, term->compID, WriteToStage);
+			break;
+		default:
+			break;
+		}
 		return false;
+	}
+
+	bool CheckTermsMerged(Filter* filter, WriteComponentState& writeState)
+	{
+		bool mergeEnable = false;
+		for (int t = 0; t < filter->termCount; t++)
+			mergeEnable |= CheckTermMerged(&filter->terms[t], writeState);
+	
+		return mergeEnable;
 	}
 
 	bool BuildPipeline(WorldImpl* world, PipelineComponent* pipeline)
@@ -81,6 +137,8 @@ namespace ECS
 		bool multiThreaded = false;
 		bool first = true;
 
+		WriteComponentState writeState = {};
+
 		// Traverse all systems in order, check all components from system
 		// If they dont have a conflict of writing, merge these systems into the same PipelineOperation
 		auto it = GetQueryIterator(world, pipeline->query);
@@ -94,7 +152,7 @@ namespace ECS
 					continue;
 
 				// Check these terms from current system is enable to merge
-				bool needMerge = CheckTermsMerged(&system->query->filter);
+				bool needMerge = CheckTermsMerged(&system->query->filter, writeState);
 				if (first)
 				{
 					multiThreaded = system->multiThreaded;
@@ -110,6 +168,13 @@ namespace ECS
 				{
 					needMerge = false;
 					op = nullptr;
+
+					// Reset write state
+					writeState.components.clear();
+
+					// Re-evaluate columns to set write flags if system is active
+					needMerge = CheckTermsMerged(&system->query->filter, writeState);
+					ECS_ASSERT(needMerge == false);
 				}
 
 				if (op == nullptr)
