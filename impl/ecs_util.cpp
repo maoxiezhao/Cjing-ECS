@@ -1,9 +1,26 @@
 ﻿#include "ecs_util.h"
 
+// TODO
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 namespace ECS
 {
 namespace Util
 {
+#ifdef _WIN32
+    I64 AtomicDecrement(volatile I64* pw)
+    {
+        return InterlockedDecrement64((LONGLONG volatile*)pw);
+    }
+
+    I64 AtomicIncrement(volatile I64* pw)
+    {
+        return InterlockedIncrement64((LONGLONG volatile*)pw);
+    }
+#endif
+
 namespace
 {
 #define ECS_CONST_PREFIX "const "
@@ -82,7 +99,6 @@ namespace _
         return typeName;
     }
 }
-
 
 /*
     -------------------------------------------------------------------------------

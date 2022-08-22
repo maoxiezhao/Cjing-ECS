@@ -10,6 +10,7 @@
 #include <array>
 #include <type_traits>
 #include <functional>
+#include <mutex>
 
 #ifndef ECS_STATIC
 #if ECS_EXPORTS && (defined(_MSC_VER) || defined(__MINGW32__))

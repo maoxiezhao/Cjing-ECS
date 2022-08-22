@@ -14,6 +14,7 @@ namespace ECS
 	{
 		I32 count;
 		bool multiThreaded;
+		Vector<SystemComponent*> systems;
 	};
 
 	struct PipelineComponent

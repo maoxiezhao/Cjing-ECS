@@ -10,7 +10,7 @@ namespace ECS
 	Iterator GetFilterIterator(WorldImpl* world, Filter& filter);
 	bool FilterIteratorNext(Iterator* it);
 	QueryImpl* CreateQuery(WorldImpl* world, const QueryCreateDesc& desc);
-	Iterator GetQueryIterator(QueryImpl* query);
+	Iterator GetQueryIterator(WorldImpl* stage, QueryImpl* query);
 	void NotifyQueriss(WorldImpl* world, const QueryEvent& ent);
 	void FiniQuery(QueryImpl* query);
 	void FiniQueries(WorldImpl* world);

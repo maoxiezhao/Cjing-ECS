@@ -219,8 +219,10 @@ namespace ECS
 			BeginDefer(&stage->base);
 		}
 
-		bool isReadonly = world->isReadonly;
 		world->isReadonly = true;
+
+		if (stageCount > 1)
+			world->isMultiThreaded = true;
 	}
 
 	void MergeStages(ObjectBase* threadCtx)
@@ -245,6 +247,7 @@ namespace ECS
 	{
 		ECS_ASSERT(world->isReadonly);
 		world->isReadonly = false;
+		world->isMultiThreaded = false;
 		MergeStages(&world->base);
 	}
 
@@ -258,6 +261,54 @@ namespace ECS
 			stage->deferQueue.clear();
 			stage->deferStack.Uninit();
 		}
+	}
+
+	void SuspendReadonly(WorldImpl* world, SuspendReadonlyState* state)
+	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(state != nullptr);
+
+		Stage* stage = GetStageFromWorld(world);
+		bool isReadonly = world->isReadonly;
+		bool isDeferred = stage->defer > 0;
+		if (!isReadonly && !isDeferred)
+		{
+			state->isReadonly = false;
+			state->isDeferred = false;
+			return;
+		}
+
+		// Can't suspend when running in multithreads
+		ECS_ASSERT(GetStageCount(world) <= 1);
+		world->isReadonly = false;
+
+		state->isReadonly = isReadonly;
+		state->isDeferred = isDeferred;
+		state->defer = stage->defer;
+		state->deferQueue = stage->deferQueue;	// TODO
+		state->deferStack = stage->deferStack;
+
+		stage->defer = 0;
+		stage->deferQueue.clear();
+		stage->deferStack.Init();
+	}
+
+	void ResumeReadonly(WorldImpl* world, SuspendReadonlyState* state)
+	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(state != nullptr);
+
+		Stage* stage = GetStageFromWorld(world);
+
+		if (!state->isReadonly && !state->isDeferred)
+			return;
+
+		world->isReadonly = state->isReadonly;
+
+		stage->defer = state->defer;
+		stage->deferQueue = state->deferQueue;
+		state->deferStack.Uninit();
+		stage->deferStack = state->deferStack;
 	}
 
 	bool DoDeferOperation(WorldImpl* world, Stage* stage)
@@ -280,7 +331,7 @@ namespace ECS
 		return op;
 	}
 
-	bool DeferAddRemove(WorldImpl* world, Stage* stage, EntityID entity, DeferOperationKind kind, EntityID compID)
+	bool DeferAddRemoveID(WorldImpl* world, Stage* stage, EntityID entity, DeferOperationKind kind, EntityID compID)
 	{
 		if (!DoDeferOperation(world, stage))
 			return false;

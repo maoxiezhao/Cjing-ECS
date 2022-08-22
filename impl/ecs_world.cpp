@@ -251,11 +251,26 @@ namespace ECS
 
 	EntityID CreateNewEntityID(WorldImpl* world)
 	{
-		return world->entityPool.NewIndex();
+		Stage* stage = GetStageFromWorld(world);
+		if (world->isMultiThreaded)
+		{
+			ECS_ASSERT(world->lastID < UINT_MAX);
+			return Util::AtomicIncrement((I64*)&world->lastID);
+		}
+		else
+		{
+			return world->entityPool.NewIndex();
+		}
 	}
 
 	EntityID CreateNewComponentID(WorldImpl* world)
 	{
+		if (world->isReadonly)
+		{
+			// Can't create new component id when in multithread
+			ECS_ASSERT(GetStageCount(world) <= 1);
+		}
+
 		EntityID ret = INVALID_ENTITY;
 		if (world->lastComponentID < HiComponentID)
 		{
@@ -268,6 +283,15 @@ namespace ECS
 			ret = CreateNewEntityID(world);
 
 		return ret;
+	}
+
+	void SetEntityNameImpl(WorldImpl* world, EntityID entity, const char* name)
+	{
+		{
+			std::lock_guard<std::mutex> lock(world->nameMutex);
+			world->entityNameMap[Util::HashFunc(name, strlen(name))] = entity;
+		}
+		SetEntityName(world, entity, name);
 	}
 
 	bool EntityTraverseAdd(WorldImpl* world, EntityID entity, const EntityCreateDesc& desc, bool nameAssigned, bool isNewEntity)
@@ -298,15 +322,42 @@ namespace ECS
 
 		if (name && !nameAssigned)
 		{
-			SetEntityName(world, entity, name);
-			world->entityNameMap[Util::HashFunc(name, strlen(name))] = entity;
+			SetEntityNameImpl(world, entity, name);
 		}
 
 		return true;
 	}
 
+	// In deferred mode, we should add components for entity one by one
+	void DeferredAddEntity(WorldImpl* world, Stage* stage, EntityID entity, const char* name, const EntityCreateDesc& desc, bool newEntity, bool nameAssigned)
+	{
+		I32 stageCount = GetStageCount(world);
+		if (name && !nameAssigned)
+		{
+			if (stageCount <= 1)
+			{
+				SuspendReadonlyState state;
+
+				// Running in a single thread, we can just leave readonly mode
+				// to be enable to add tow entities with same name
+				SuspendReadonly(world, &state);
+				SetEntityNameImpl(world, entity, name);
+				ResumeReadonly(world, &state);
+			}
+			else
+			{
+				// In multithreaded mode we can't leave readonly mode
+				// There is a risk to create entities with same name
+				SetEntityNameImpl(world, entity, name);
+			}
+		}
+	}
+
 	EntityID CreateEntityID(WorldImpl* world, const EntityCreateDesc& desc)
 	{
+		ECS_ASSERT(world != nullptr);
+		Stage* stage = GetStageFromWorld(world);
+
 		const char* name = desc.name;
 		bool isNewEntity = false;
 		bool nameAssigned = false;
@@ -330,24 +381,35 @@ namespace ECS
 				isNewEntity = true;
 			}
 		}
+		else
+		{
+			EnsureEntity(world, result);
+		}
 
-		if (!EntityTraverseAdd(world, result, desc, nameAssigned, isNewEntity))
-			return INVALID_ENTITY;
+		if (stage->defer)
+			DeferredAddEntity(world, stage, result, name, desc, isNewEntity, nameAssigned);
+		else
+			if (!EntityTraverseAdd(world, result, desc, nameAssigned, isNewEntity))
+				return INVALID_ENTITY;
 
 		return result;
 	}
 
 	EntityID FindEntityIDByName(WorldImpl* world, const char* name)
 	{
-		// First find from entityNameMap
-		auto it = world->entityNameMap.find(Util::HashFunc(name, strlen(name)));
-		if (it != world->entityNameMap.end())
-			return it->second;
+		EntityID ret = INVALID_ENTITY;
+		{
+			// First find from entityNameMap
+			std::lock_guard<std::mutex> lock(world->nameMutex);
+			auto it = world->entityNameMap.find(Util::HashFunc(name, strlen(name)));
+			if (it != world->entityNameMap.end())
+				ret =  it->second;
+		}
 
 		// Init a filter to get all entity which has NameComponent
 		// TODO...
 
-		return INVALID_ENTITY;
+		return ret;
 	}
 
 	void SetEntityName(WorldImpl* world, EntityID entity, const char* name)
@@ -705,7 +767,7 @@ namespace ECS
 		ECS_ASSERT(IsCompIDValid(compID));
 	
 		Stage* stage = GetStageFromWorld(world);
-		if (DeferAddRemove(world, stage, entity, EcsOpAdd, compID))
+		if (DeferAddRemoveID(world, stage, entity, EcsOpAdd, compID))
 			return;
 		
 		AddComponentForEntity(world, entity, compID);
@@ -719,7 +781,7 @@ namespace ECS
 		ECS_ASSERT(IsCompIDValid(compID));
 
 		Stage* stage = GetStageFromWorld(world);
-		if (DeferAddRemove(world, stage, entity, EcsOpRemove, compID))
+		if (DeferAddRemoveID(world, stage, entity, EcsOpRemove, compID))
 			return;
 
 		EntityInfo* info = world->entityPool.Get(entity);
@@ -1123,6 +1185,8 @@ namespace ECS
 		ECS_DELETE_OBJECT(world->pendingBuffer);
 		ECS_DELETE_OBJECT(world->pendingTables);
 		ECS_DELETE_OBJECT(world);
+
+		isSystemInit = false;
 	}
 
 	void SetThreads(WorldImpl* world, I32 threads, bool startThreads)

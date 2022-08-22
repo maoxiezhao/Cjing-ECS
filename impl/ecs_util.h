@@ -38,6 +38,9 @@ namespace Util
 #error "Not supported"
 #endif
 
+	I64 AtomicDecrement(volatile I64* pw);
+	I64 AtomicIncrement(volatile I64* pw);
+
 	template <bool V>
 	using if_t = std::enable_if_t<V, int>;
 

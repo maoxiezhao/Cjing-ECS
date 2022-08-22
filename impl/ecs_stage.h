@@ -21,9 +21,11 @@ namespace ECS
 	void BeginReadonly(WorldImpl* world);
 	void EndReadonly(WorldImpl* world);
 	void PurgeDefer(WorldImpl* world);
+	void SuspendReadonly(WorldImpl* world, SuspendReadonlyState* state);
+	void ResumeReadonly(WorldImpl* world, SuspendReadonlyState* state);
 
 	DeferOperation* NewDeferOperator(Stage* stage);
-	bool DeferAddRemove(WorldImpl* world, Stage* stage, EntityID entity, DeferOperationKind kind, EntityID compID);
+	bool DeferAddRemoveID(WorldImpl* world, Stage* stage, EntityID entity, DeferOperationKind kind, EntityID compID);
 	bool DeferDelete(WorldImpl* world, Stage* stage, EntityID entity);
 	bool DeferSet(WorldImpl* world, Stage* stage, EntityID entity, DeferOperationKind kind, EntityID compID, size_t size, const void* value, void** valueOut);
 }

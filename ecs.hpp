@@ -986,7 +986,7 @@ namespace ECS
 
 		Iterator GetQueryIterator()override
 		{
-			return ECS::GetQueryIterator(impl);
+			return ECS::GetQueryIterator(world, impl);
 		}
 
 		bool NextQueryIterator(Iterator& iter)override

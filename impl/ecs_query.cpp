@@ -1125,7 +1125,7 @@ namespace ECS
 		}
 	}
 
-	Iterator GetQueryIterator(QueryImpl* query)
+	Iterator GetQueryIterator(WorldImpl* stage, QueryImpl* query)
 	{
 		ECS_ASSERT(query != nullptr);
 		ECS_ASSERT(query->world != nullptr);
@@ -1154,7 +1154,7 @@ namespace ECS
 			queryIt.node = query->tableList.first->Cast();
 
 		Iterator iter = {};
-		iter.world = world;
+		iter.world = stage;
 		iter.terms = query->filter.terms;
 		iter.termCount = query->filter.termCount;
 		iter.tableCount = tableCount;

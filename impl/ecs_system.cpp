@@ -65,7 +65,7 @@ namespace ECS
 		BeginDefer(threadCtx);
 
 		Iterator workerIter = {};
-		Iterator queryIter = GetQueryIterator(system->query);
+		Iterator queryIter = GetQueryIterator((WorldImpl*)threadCtx, system->query);
 		Iterator* iter = &queryIter;
 
 		// If current system support multithread

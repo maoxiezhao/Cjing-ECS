@@ -374,6 +374,15 @@ namespace ECS
 		void* value;
 	};
 
+	struct SuspendReadonlyState
+	{
+		bool isReadonly = false;
+		bool isDeferred = false;
+		I32 defer = 0;
+		Vector<DeferOperation> deferQueue;
+		Util::Stack deferStack;
+	};
+
 	struct Stage
 	{
 		// Base object info
@@ -406,6 +415,7 @@ namespace ECS
 		// Entity
 		Util::SparseArray<EntityInfo> entityPool;
 		Hashmap<EntityID> entityNameMap;
+		std::mutex nameMutex;
 
 		// Tables
 		EntityTable root;
@@ -442,6 +452,7 @@ namespace ECS
 
 		// Status
 		bool isReadonly = false;
+		bool isMultiThreaded = false;
 		bool isFini = false;
 	};
 }
