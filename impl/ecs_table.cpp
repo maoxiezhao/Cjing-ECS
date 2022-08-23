@@ -129,8 +129,15 @@ namespace ECS
 
 	void FreeTableGraphEdge(WorldImpl* world, TableGraphEdge* edge)
 	{
-		edge->next = (Util::ListNode<TableGraphEdge>*)world->freeEdge;
-		world->freeEdge = edge;
+		if (world->isFini)
+		{
+			ECS_FREE(edge);
+		}
+		else
+		{
+			edge->next = (Util::ListNode<TableGraphEdge>*)world->freeEdge;
+			world->freeEdge = edge;
+		}
 	}
 
 	TableGraphEdge* EnsureHiTableGraphEdge(WorldImpl* world, TableGraphEdges& edges, EntityID compID)
@@ -188,10 +195,6 @@ namespace ECS
 		ECS_ASSERT(edge != nullptr);
 		ECS_ASSERT(edge->compID == compID);
 
-		// TODO: is valid?
-		if (edge->from == nullptr)
-			return;
-
 		// Remove node from list of Edges
 		Util::ListNode<TableGraphEdge>* prev = edge->prev;
 		Util::ListNode<TableGraphEdge>* next = edge->next;
@@ -205,13 +208,11 @@ namespace ECS
 		if (diff != nullptr && diff != &EMPTY_TABLE_DIFF)
 			ECS_DELETE_OBJECT(diff);
 
-		edge->to = nullptr;
-
 		// Component use small cache array when compID < HiComponentID
-		if (compID > HiComponentID)
+		if (compID >= HiComponentID)
 			FreeTableGraphEdge(world, edge);
 		else
-			edge->from = nullptr;
+			memset(edge, 0, sizeof(TableGraphEdge));
 	}
 
 	void ClearTableGraphEdges(WorldImpl* world, EntityTable* table)
@@ -226,27 +227,41 @@ namespace ECS
 
 		// Remove incoming edges
 		// 1. Add edges are appended to incomingEdges->Next
-		Util::ListNode<TableGraphEdge>* cur, * next = graphNode.incomingEdges.next;
-		while ((cur = next))
+		Util::ListNode<TableGraphEdge>* cur = graphNode.incomingEdges.next;
+		Util::ListNode<TableGraphEdge>* next = nullptr;
+		if (cur != nullptr)
 		{
-			next = cur->next;
+			do
+			{
+				TableGraphEdge* edget = cur->Cast();
+				ECS_ASSERT(edget->to == table);
+				ECS_ASSERT(edget->from != nullptr);
+				next = cur->next;
 
-			TableGraphEdge* edge = (TableGraphEdge*)cur;
-			DisconnectEdge(world, edge, edge->compID);
-			if (edge->from != nullptr)
-				edge->from->graphNode.add.hiEdges.erase(edge->compID);
+				auto& edges = edget->from->graphNode.add.hiEdges;
+				EntityID compId = edget->compID;
+				DisconnectEdge(world, edget, compId);		
+				edges.erase(compId);
+			} 
+			while ((cur = next));
 		}
-
 		// 2. Remove edges are appended to incomingEdges->prev
-		Util::ListNode<TableGraphEdge>* prev = graphNode.incomingEdges.prev;
-		while ((cur = prev))
+		cur = graphNode.incomingEdges.prev;
+		if (cur != nullptr)
 		{
-			prev = cur->prev;
+			do
+			{
+				TableGraphEdge* edget = cur->Cast();
+				ECS_ASSERT(edget->to == table);
+				ECS_ASSERT(edget->from != nullptr);
+				next = cur->prev;
 
-			TableGraphEdge* edge = (TableGraphEdge*)cur;
-			DisconnectEdge(world, edge, edge->compID);
-			if (edge->from != nullptr)
-				edge->from->graphNode.remove.hiEdges.erase(edge->compID);
+				auto& edges = edget->from->graphNode.remove.hiEdges;
+				EntityID compId = edget->compID;
+				DisconnectEdge(world, edget, compId);
+				edges.erase(compId);
+			} 
+			while ((cur = next));
 		}
 
 		graphNode.add.hiEdges.clear();
