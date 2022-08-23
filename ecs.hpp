@@ -332,6 +332,7 @@ namespace ECS
 
 		ECS::Entity Entity(const char* name)const;
 		ECS::Entity Prefab(const char* name)const;
+		ECS::Entity FindEntity(const char* name)const;
 
 		template<typename... Args>
 		SystemBuilder<Args...> CreateSystem();
@@ -1123,6 +1124,12 @@ namespace ECS
 		ECS::Entity entity = ECS::Entity(world, name);
 		entity.Add(EcsTagPrefab);
 		return entity;
+	}
+
+	inline ECS::Entity World::FindEntity(const char* name) const
+	{
+		EntityID entityID = ECS::FindEntityIDByName(world, name);
+		return ECS::Entity(world, entityID);
 	}
 
 	template<typename... Args>
