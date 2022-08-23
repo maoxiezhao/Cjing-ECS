@@ -8,7 +8,7 @@ namespace ECS
 	void SetIteratorVar(Iterator& it, I32 varID, const TableRange& range);
 	bool IsIteratorVarConstrained(Iterator& it, I32 varID);
 	void ValidateInteratorCache(Iterator& it);
-	void IteratorPopulateData(WorldImpl* world, Iterator& iter, EntityTable* table, I32 offset, size_t* sizes, void** ptrs);
+	void IteratorPopulateData(WorldImpl* world, Iterator& iter, EntityTable* table, I32 offset, I32 count, size_t* sizes, void** ptrs);
 	void FiniIterator(Iterator& it);
 	bool NextIterator(Iterator* it);
 	Iterator GetSplitWorkerInterator(Iterator& it, I32 index, I32 count);

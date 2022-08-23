@@ -146,8 +146,8 @@ TEST_CASE("Prefab", "ECS")
         .Instantiate(prefab)
         .Add<TestComponent>();
 
-    PositionComponent* pos1 = test1.Get<PositionComponent>();
-    PositionComponent* pos2 = test2.Get<PositionComponent>();
+    PositionComponent* pos1 = test1.GetMut<PositionComponent>();
+    PositionComponent* pos2 = test2.GetMut<PositionComponent>();
     CHECK(pos1 != pos2);
 
     pos1->x = 3.0f;
@@ -155,8 +155,8 @@ TEST_CASE("Prefab", "ECS")
     pos2->x = 2.0f;
     CHECK(pos2->x == test2.Get<PositionComponent>()->x);
 
-    TestComponent* t1 = test1.Get<TestComponent>();
-    TestComponent* t2 = test2.Get<TestComponent>();
+    TestComponent* t1 = test1.GetMut<TestComponent>();
+    TestComponent* t2 = test2.GetMut<TestComponent>();
     CHECK(t1 != nullptr);
     CHECK(t2 != nullptr);
 }
@@ -322,6 +322,11 @@ void WaitECSJob(void* ptr)
         Jobsystem::Wait((Jobsystem::JobHandle*)ctx->payload);
 }
 
+struct TestIntComponent
+{
+    int a = 0;
+};
+
 TEST_CASE("Pipeline+JobSystem", "ECS")
 {
     Jobsystem::Initialize(8);
@@ -338,31 +343,39 @@ TEST_CASE("Pipeline+JobSystem", "ECS")
     for (int i = 0; i < 12500; i++)
     {
         if (i == 0)
-            entity = world.Entity(std::to_string(i).c_str()).Add<VelocityComponent>();
+            entity = world.Entity(std::to_string(i).c_str()).Add<TestIntComponent>();
         else
-            world.Entity(std::to_string(i).c_str()).Add<VelocityComponent>();
+            world.Entity(std::to_string(i).c_str()).Add<TestIntComponent>();
     }
+
+    CHECK(entity != INVALID_ENTITY);
+
+    volatile int valueMap[22500];
+    for (int i = 0; i < ARRAYSIZE(valueMap); i++)
+        valueMap[i] = 0;
 
     volatile int a = 0;
     volatile int b = 0;
     int c = 0;
-    auto system1 = world.CreateSystem<VelocityComponent>()
+    auto system1 = world.CreateSystem<TestIntComponent>()
         .Kind<Rendering>()
         .MultiThread(true)
-        .ForEach([&](ECS::Entity entity, VelocityComponent& vel) {
-            AtomicIncrement(&a);        
+        .ForEach([&](ECS::Entity entity, TestIntComponent& vel) {
+            AtomicIncrement(&a);       
+            entity.GetMut<TestIntComponent>()->a = 1;
+            AtomicIncrement(&valueMap[entity]);
         });
 
-    auto system2 = world.CreateSystem<VelocityComponent>()
+    auto system2 = world.CreateSystem<TestIntComponent>()
         .Kind<Rendering>()
         .MultiThread(true)
-        .ForEach([&](ECS::Entity entity, VelocityComponent& vel) {
+        .ForEach([&](ECS::Entity entity, TestIntComponent& vel) {
             AtomicIncrement(&b);
         });
 
-    auto system3 = world.CreateSystem<VelocityComponent>()
+    auto system3 = world.CreateSystem<TestIntComponent>()
         .Kind<Rendering>()
-        .ForEach([&](ECS::Entity entity, VelocityComponent& vel) {
+        .ForEach([&](ECS::Entity entity, TestIntComponent& vel) {
             c = a + b;
         });
 
@@ -373,7 +386,21 @@ TEST_CASE("Pipeline+JobSystem", "ECS")
 
     world.RunPipeline(pipeline);
 
+    auto query = world.CreateQuery<TestIntComponent>().Build();
+    query.ForEach([&](ECS::Entity entity, TestIntComponent& vel) {
+        if (vel.a != 1)
+        {
+            std::cout << entity << std::endl;
+        }
+     });
+
     Jobsystem::Uninitialize();
+
+    for (int i = 0; i < ARRAYSIZE(valueMap); i++)
+    {
+        if (valueMap[i] > 1)
+            std::cout << i << std::endl;
+    }
 
     CHECK(a == 12500);
     CHECK(b == 12500);

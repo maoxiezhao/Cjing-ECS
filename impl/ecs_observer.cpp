@@ -69,7 +69,7 @@ namespace ECS
 		for (int i = 0; i < trigger->eventCount; i++)
 		{
 			EntityID event = trigger->events[i];
-			ECS_ASSERT(event != INVALID_ENTITY);
+			ECS_ASSERT(event != INVALID_ENTITYID);
 
 			EventRecords* records = observable.events.Ensure(event);
 			EventRecord& record = records->eventIds[id];
@@ -92,7 +92,7 @@ namespace ECS
 		for (int i = 0; i < trigger->eventCount; i++)
 		{
 			EntityID event = trigger->events[i];
-			ECS_ASSERT(event != INVALID_ENTITY);
+			ECS_ASSERT(event != INVALID_ENTITYID);
 
 			EventRecords* records = observable.events.Get(event);
 			if (records == nullptr)
@@ -128,14 +128,17 @@ namespace ECS
 
 		EntityCreateDesc entityDesc = {};
 		EntityID ret = CreateEntityID(world, entityDesc);
-		bool newAdded = false;
-		TriggerComponent* comp = static_cast<TriggerComponent*>(GetOrCreateMutableByID(world, ret, ECS_ENTITY_ID(TriggerComponent), &newAdded));
-		if (newAdded)
-		{
-			Term term = desc.term;
-			if (!FinalizeTerm(term))
-				goto error;
+		if (HasComponent(world, ret, ECS_ENTITY_ID(TriggerComponent)))
+			return ret;
 
+		TriggerComponent* comp = static_cast<TriggerComponent*>(GetMutableComponent(world, ret, ECS_ENTITY_ID(TriggerComponent)));
+		ECS_ASSERT(comp != nullptr);
+
+		Term term = desc.term;
+		if (!FinalizeTerm(term))
+			goto error;
+
+		{
 			Trigger* trigger = world->triggers.Requset();
 			ECS_ASSERT(trigger != nullptr);
 			trigger->id = (I32)world->triggers.GetLastID();
@@ -154,11 +157,12 @@ namespace ECS
 
 			RegisterTrigger(*observable, trigger);
 		}
+
 		return ret;
 	error:
-		if (ret != INVALID_ENTITY)
+		if (ret != INVALID_ENTITYID)
 			DeleteEntity(world, ret);
-		return INVALID_ENTITY;
+		return INVALID_ENTITYID;
 	}
 
 	void FiniTrigger(Trigger* trigger)
@@ -186,73 +190,75 @@ namespace ECS
 		// ObserverComp => Observer => Trigger for each term
 		EntityCreateDesc entityDesc = {};
 		EntityID ret = CreateEntityID(world, entityDesc);
-		bool newAdded = false;
-		ObserverComponent* comp = static_cast<ObserverComponent*>(GetOrCreateMutableByID(world, ret, ECS_ENTITY_ID(ObserverComponent), &newAdded));
-		if (newAdded)
+		if (HasComponent(world, ret, ECS_ENTITY_ID(ObserverComponent)))
+			return ret;
+
+		ObserverComponent* comp = static_cast<ObserverComponent*>(GetMutableComponent(world, ret, ECS_ENTITY_ID(ObserverComponent)));
+		ECS_ASSERT(comp != nullptr);
+
+		Observer* observer = world->observers.Requset();
+		ECS_ASSERT(observer != nullptr);
+		observer->id = world->observers.GetLastID();
+		observer->world = world;
+
+		comp->observer = observer;
+
+		for (int i = 0; i < ECS_TRIGGER_MAX_EVENT_COUNT; i++)
 		{
-			Observer* observer = world->observers.Requset();
-			ECS_ASSERT(observer != nullptr);
-			observer->id = world->observers.GetLastID();
-			observer->world = world;
+			if (desc.events[i] == INVALID_ENTITYID)
+				continue;
 
-			comp->observer = observer;
-
-			for (int i = 0; i < ECS_TRIGGER_MAX_EVENT_COUNT; i++)
-			{
-				if (desc.events[i] == INVALID_ENTITY)
-					continue;
-
-				observer->events[observer->eventCount] = desc.events[i];
-				observer->eventCount++;
-			}
-
-			ECS_ASSERT(observer->eventCount > 0);
-
-			observer->callback = desc.callback;
-			observer->ctx = desc.ctx;
-
-			// Init the filter of observer
-			if (!InitFilter(desc.filterDesc, observer->filter))
-			{
-				FiniObserver(observer);
-				return INVALID_ENTITY;
-			}
-
-			// Create a trigger for each term
-			TriggerDesc triggerDesc = {};
-			triggerDesc.callback = ObserverTriggerCallback;
-			triggerDesc.ctx = observer;
-			triggerDesc.eventID = &observer->eventID;
-			memcpy(triggerDesc.events, observer->events, sizeof(EntityID) * observer->eventCount);
-			triggerDesc.eventCount = observer->eventCount;
-
-			const Filter& filter = observer->filter;
-			for (int i = 0; i < filter.termCount; i++)
-			{
-				triggerDesc.term = filter.terms[i];
-				/*if (IsCompIDTag(triggerDesc.term.compID))
-					ECS_ASSERT(false);*/
-
-				EntityID trigger = CreateTrigger(world, triggerDesc);
-				if (trigger == INVALID_ENTITY)
-					goto error;
-
-				observer->triggers.push_back(trigger);
-			}
+			observer->events[observer->eventCount] = desc.events[i];
+			observer->eventCount++;
 		}
+
+		ECS_ASSERT(observer->eventCount > 0);
+
+		observer->callback = desc.callback;
+		observer->ctx = desc.ctx;
+
+		// Init the filter of observer
+		if (!InitFilter(desc.filterDesc, observer->filter))
+		{
+			FiniObserver(observer);
+			return INVALID_ENTITYID;
+		}
+
+		// Create a trigger for each term
+		TriggerDesc triggerDesc = {};
+		triggerDesc.callback = ObserverTriggerCallback;
+		triggerDesc.ctx = observer;
+		triggerDesc.eventID = &observer->eventID;
+		memcpy(triggerDesc.events, observer->events, sizeof(EntityID) * observer->eventCount);
+		triggerDesc.eventCount = observer->eventCount;
+
+		const Filter& filter = observer->filter;
+		for (int i = 0; i < filter.termCount; i++)
+		{
+			triggerDesc.term = filter.terms[i];
+			/*if (IsCompIDTag(triggerDesc.term.compID))
+				ECS_ASSERT(false);*/
+
+			EntityID trigger = CreateTrigger(world, triggerDesc);
+			if (trigger == INVALID_ENTITYID)
+				goto error;
+
+			observer->triggers.push_back(trigger);
+		}
+
 		return ret;
 
 	error:
-		if (ret != INVALID_ENTITY)
+		if (ret != INVALID_ENTITYID)
 			DeleteEntity(world, ret);
-		return INVALID_ENTITY;
+		return INVALID_ENTITYID;
 	}
 
 	void FiniObserver(Observer* observer)
 	{
 		for (auto trigger : observer->triggers)
 		{
-			if (trigger != INVALID_ENTITY)
+			if (trigger != INVALID_ENTITYID)
 				DeleteEntity(observer->world, trigger);
 		}
 		observer->triggers.clear();
@@ -268,7 +274,7 @@ namespace ECS
 
 	void NotifyEvents(WorldImpl* world, Observable* observable, Iterator& it, const EntityType& ids, EntityID event)
 	{
-		ECS_ASSERT(event != INVALID_ENTITY);
+		ECS_ASSERT(event != INVALID_ENTITYID);
 		ECS_ASSERT(!ids.empty());
 
 		const Map<EventRecord>* eventMap = GetTriggers(observable, event);
@@ -284,7 +290,8 @@ namespace ECS
 
 	void EmitEvent(WorldImpl* world, const EventDesc& desc)
 	{
-		ECS_ASSERT(desc.event != INVALID_ENTITY);
+		ECS_ASSERT(ECS_CHECK_OBJECT(&world->base, WorldImpl));
+		ECS_ASSERT(desc.event != INVALID_ENTITYID);
 		ECS_ASSERT(!desc.ids.empty());
 		ECS_ASSERT(desc.table != nullptr);
 

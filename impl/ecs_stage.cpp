@@ -50,14 +50,14 @@ namespace ECS
 		return nullptr;
 	}
 
-	WorldImpl* GetWorld(ObjectBase* threadCtx)
+	WorldImpl* GetWorld(WorldImpl* threadCtx)
 	{
 		ECS_ASSERT(threadCtx != nullptr);
-		if (ECS_CHECK_OBJECT(threadCtx, WorldImpl))
+		if (ECS_CHECK_OBJECT(&threadCtx->base, WorldImpl))
 		{
 			return (WorldImpl*)threadCtx;
 		}
-		else if (ECS_CHECK_OBJECT(threadCtx, Stage))
+		else if (ECS_CHECK_OBJECT(&threadCtx->base, Stage))
 		{
 			Stage* stage = (Stage*)threadCtx;
 			return stage->world;
@@ -85,6 +85,7 @@ namespace ECS
 
 	I32 GetStageCount(WorldImpl* world)
 	{
+		world = GetWorld(world);
 		return world->stageCount;
 	}
 
@@ -165,7 +166,7 @@ namespace ECS
 				{
 				case ECS::EcsOpNew:
 				case ECS::EcsOpAdd:
-					ECS_ASSERT(op.id != INVALID_ENTITY);
+					ECS_ASSERT(op.id != INVALID_ENTITYID);
 					AddComponent(world, entity, op.id);
 					break;
 				case ECS::EcsOpRemove:
@@ -176,7 +177,8 @@ namespace ECS
 					SetComponent(world, entity, op.id, op.size, op.value, true);
 					break;
 				case ECS::EcsOpModified:
-					ECS_ASSERT(false);
+					if (HasComponent(world, op.entity, op.id))
+						ModifiedComponent(world, op.entity, op.id);
 					break;
 				case ECS::EcsOpDelete:
 					DeleteEntity(world, entity);
@@ -228,7 +230,7 @@ namespace ECS
 		}
 		else
 		{
-			WorldImpl* world = GetWorld(threadCtx);
+			WorldImpl* world = GetWorld((WorldImpl*)threadCtx);
 			I32 stageCount = GetStageCount(world);
 			for (int i = 0; i < stageCount; i++)
 			{
@@ -321,7 +323,7 @@ namespace ECS
 	DeferOperation* NewDeferOperator(Stage* stage)
 	{
 		stage->deferQueue.emplace_back();
-		auto* op = &stage->deferQueue.front();
+		auto* op = &stage->deferQueue.back();
 		memset(op, 0, sizeof(DeferOperation));
 		return op;
 	}
@@ -380,6 +382,18 @@ namespace ECS
 		if (valueOut)
 			*valueOut = op->value;
 
+		return true;
+	}
+
+	bool DeferModified(WorldImpl* world, Stage* stage, EntityID entity, EntityID id)
+	{
+		if (!DoDeferOperation(world, stage))
+			return false;
+
+		auto op = NewDeferOperator(stage);
+		op->entity = entity;
+		op->kind = EcsOpModified;
+		op->id = id;
 		return true;
 	}
 }

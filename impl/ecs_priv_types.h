@@ -34,7 +34,7 @@ namespace ECS
 	{
 		EntityTable* from = nullptr;
 		EntityTable* to = nullptr;
-		EntityID compID = INVALID_ENTITY;
+		EntityID compID = INVALID_ENTITYID;
 		EntityTableDiff* diff = nullptr; // mapping to TableGraphNode diffBuffer
 	};
 
@@ -268,12 +268,12 @@ namespace ECS
 		Vector<QueryTableNode> tableSlices;     // Table sorted by orderby
 
 		// Group
-		EntityID groupByID = INVALID_ENTITY;
+		EntityID groupByID = INVALID_ENTITYID;
 		Term* groupByItem = nullptr;
 		Map<QueryTableList> groups;
 
 		// Observer
-		EntityID observer = INVALID_ENTITY;
+		EntityID observer = INVALID_ENTITYID;
 
 		// Monitor
 		Vector<I32> monitor;

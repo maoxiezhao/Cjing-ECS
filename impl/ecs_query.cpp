@@ -4,6 +4,7 @@
 #include "ecs_table.h"
 #include "ecs_observer.h"
 #include "ecs_iter.h"
+#include "ecs_stage.h"
 
 namespace ECS
 {
@@ -149,10 +150,10 @@ namespace ECS
 		if (second & ECS_ROLE_MASK)
 			return false;
 
-		if (second != INVALID_ENTITY && role == INVALID_ENTITY)
+		if (second != INVALID_ENTITYID && role == INVALID_ENTITYID)
 			role = term.role = EcsRolePair;
 
-		if (second == INVALID_ENTITY && !ECS_HAS_ROLE(role, EcsRolePair))
+		if (second == INVALID_ENTITYID && !ECS_HAS_ROLE(role, EcsRolePair))
 		{
 			term.compID = first | role;
 		}
@@ -173,7 +174,7 @@ namespace ECS
 	bool FinalizeTerm(Term& term)
 	{
 		// If comp id is set, populate term from the comp id
-		if (term.compID != INVALID_ENTITY)
+		if (term.compID != INVALID_ENTITYID)
 		{
 			if (!PopulateFromTermID(term))
 				return false;
@@ -182,7 +183,7 @@ namespace ECS
 		if (!FinalizeTermIDs(term))
 			return false;
 
-		if (term.compID == INVALID_ENTITY && !PopulateToTermID(term))
+		if (term.compID == INVALID_ENTITYID && !PopulateToTermID(term))
 			return false;
 
 		return true;
@@ -337,7 +338,7 @@ namespace ECS
 	// Find the insertion node of the group which has the closest groupID
 	QueryTableNode* QueryFindGroupInsertionNode(QueryImpl* query, U64 groupID)
 	{
-		ECS_ASSERT(query->groupByID != INVALID_ENTITY);
+		ECS_ASSERT(query->groupByID != INVALID_ENTITYID);
 
 		QueryTableList* closedList = nullptr;
 		U64 closedGroupID = 0;
@@ -426,7 +427,7 @@ namespace ECS
 		QueryTableMatch* match = node->match;
 
 		// Compute group id
-		bool groupByID = query->groupByID != INVALID_ENTITY;
+		bool groupByID = query->groupByID != INVALID_ENTITYID;
 		if (groupByID)
 			match->groupID = ComputeGroupID(query, match);
 		else
@@ -674,7 +675,7 @@ namespace ECS
 				filter.terms[i].inout == TypeInOutKind::InOutNone)
 				continue;
 
-			if (match->columns[t] == INVALID_ENTITY)
+			if (match->columns[t] == INVALID_ENTITYID)
 				continue;
 
 			monitor[t + 1] = 0;
@@ -769,7 +770,7 @@ namespace ECS
 		// Delete the observer
 		if (!world->isFini)
 		{
-			if (query->observer != INVALID_ENTITY)
+			if (query->observer != INVALID_ENTITYID)
 				DeleteEntity(world, query->observer);
 		}
 
@@ -848,7 +849,7 @@ namespace ECS
 	EntityID GetEntityFromHelper(const SortHelper& helper)
 	{
 		if (helper.row >= helper.count)
-			return INVALID_ENTITY;
+			return INVALID_ENTITYID;
 		return helper.entities[helper.row];
 	}
 
@@ -903,7 +904,7 @@ namespace ECS
 			bool finished = false;
 			I32 min = 0;
 			EntityID e1;
-			while ((e1 = GetEntityFromHelper(helpers[min])) == INVALID_ENTITY)
+			while ((e1 = GetEntityFromHelper(helpers[min])) == INVALID_ENTITYID)
 			{
 				min++;
 				if (min == count)
@@ -919,7 +920,7 @@ namespace ECS
 			for (int j = min + 1; j < count; j++)
 			{
 				EntityID e2 = GetEntityFromHelper(helpers[j]);
-				if (e2 == INVALID_ENTITY)
+				if (e2 == INVALID_ENTITYID)
 					continue;
 
 				if (compare(e1, nullptr, e2, nullptr) > 0)
@@ -1016,7 +1017,7 @@ namespace ECS
 			observerDesc.ctx = ret;
 
 			ret->observer = CreateObserver(world, observerDesc);
-			if (ret->observer == INVALID_ENTITY)
+			if (ret->observer == INVALID_ENTITYID)
 				goto error;
 		}
 
@@ -1056,6 +1057,8 @@ namespace ECS
 
 	Iterator GetFilterIterator(WorldImpl* world, Filter& filter)
 	{
+		world = GetWorld(world);
+
 		FlushPendingTables(world);
 
 		Iterator iter = {};
@@ -1448,7 +1451,7 @@ namespace ECS
 		return false;
 
 	yield:
-		IteratorPopulateData(world, *it, table, 0, it->sizes, it->ptrs);
+		IteratorPopulateData(world, *it, table, 0, 0, it->sizes, it->ptrs);
 		return true;
 	}
 
@@ -1517,7 +1520,7 @@ namespace ECS
 				cursor.count = 0;
 			}
 
-			IteratorPopulateData(world, *it, table, cursor.first, nullptr, it->ptrs);
+			IteratorPopulateData(world, *it, table, cursor.first, cursor.count, nullptr, it->ptrs);
 
 			iter->node = next;
 			iter->prev = node;

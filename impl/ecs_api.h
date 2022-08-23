@@ -83,6 +83,12 @@ namespace ECS
 	#define ECS_NEW_PLACEMENT(mem, T) new (mem) T()
 	#define ECS_FREE(ptr) ecsSystemAPI.free_(ptr)
 
+#ifndef __cplusplus
+#define ECS_CAST(T, V) ((T)(V))
+#else
+#define ECS_CAST(T, V) (static_cast<T>(V))
+#endif
+
 	#define ECS_MOV(...) static_cast<std::remove_reference_t<decltype(__VA_ARGS__)>&&>(__VA_ARGS__)
 	#define ECS_FWD(...) static_cast<decltype(__VA_ARGS__)&&>(__VA_ARGS__)
 	#define ECS_ASSERT(...) assert(__VA_ARGS__)

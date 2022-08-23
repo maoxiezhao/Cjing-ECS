@@ -379,6 +379,11 @@ namespace ECS
 
 	EntityTable* GetTable(WorldImpl* world, EntityID entity)
 	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(entity != INVALID_ENTITYID);
+
+		world = GetWorld(world);
+		
 		EntityInfo* info = world->entityPool.Get(entity);
 		if (info == nullptr)
 			return nullptr;
@@ -440,7 +445,7 @@ namespace ECS
 		}
 
 		// Check table flags
-		if (!(table->flags & TableFlagHasRelation) || relation == INVALID_ENTITY)
+		if (!(table->flags & TableFlagHasRelation) || relation == INVALID_ENTITYID)
 			return -1;
 
 		// Relation must is a pair (relation, None)
@@ -452,7 +457,7 @@ namespace ECS
 		if (column != -1)
 		{
 			EntityID obj = ECS_GET_PAIR_SECOND(table->type[column]);
-			ECS_ASSERT(obj != INVALID_ENTITY);
+			ECS_ASSERT(obj != INVALID_ENTITYID);
 			EntityInfo* objInfo = world->entityPool.Get(obj);
 			ECS_ASSERT(objInfo != nullptr);
 
@@ -505,13 +510,13 @@ namespace ECS
 
 		// Find the column of target compID
 		I32 depth = 0;
-		EntityID obj = INVALID_ENTITY;
+		EntityID obj = INVALID_ENTITYID;
 		I32 column = TableSearchRelation(table, compID, relation, 0, 0, &obj, &depth);
 		if (column == -1)
 			return -1;
 
 		// Get obj of relation
-		if (obj == INVALID_ENTITY)
+		if (obj == INVALID_ENTITYID)
 		{
 			if (TableSearchRelation(table, compID, relation, 1, 0, &obj, &depth) == -1)
 				return column;
@@ -522,7 +527,7 @@ namespace ECS
 			EntityTable* curTable = GetTable(world, obj);
 			ECS_ASSERT(curTable != nullptr);
 			I32 curDepth = 0;
-			EntityID curObj = INVALID_ENTITY;
+			EntityID curObj = INVALID_ENTITYID;
 			if (TableSearchRelation(curTable, compID, relation, 1, 0, &curObj, &curDepth) == -1)
 				break;
 
@@ -552,10 +557,10 @@ namespace ECS
 		}
 		else
 		{
-			if (addID != INVALID_ENTITY)
+			if (addID != INVALID_ENTITYID)
 				outDiff.added.push_back(addID);
 
-			if (removeID != INVALID_ENTITY)
+			if (removeID != INVALID_ENTITYID)
 				outDiff.removed.push_back(removeID);
 		}
 	}
@@ -571,7 +576,7 @@ namespace ECS
 			ECS_ASSERT(ret != nullptr);
 		}
 
-		PopulateTableDiff(edge, compID, INVALID_ENTITY, diff);
+		PopulateTableDiff(edge, compID, INVALID_ENTITYID, diff);
 		return ret;
 	}
 
@@ -586,7 +591,7 @@ namespace ECS
 			ECS_ASSERT(ret != nullptr);
 		}
 
-		PopulateTableDiff(edge, compID, INVALID_ENTITY, diff);
+		PopulateTableDiff(edge, compID, INVALID_ENTITYID, diff);
 		return ret;
 	}
 
@@ -985,6 +990,8 @@ namespace ECS
 
 	void FlushPendingTables(WorldImpl* world)
 	{
+		ECS_ASSERT(ECS_CHECK_OBJECT(&world->base, WorldImpl));
+
 		if (world->isReadonly)
 		{
 			ECS_ASSERT(world->pendingTables->Count() == 0);
@@ -1169,7 +1176,7 @@ namespace ECS
 					if (updateEntity)
 					{
 						EntityID entity = entities[row];
-						ECS_ASSERT(entity != INVALID_ENTITY);
+						ECS_ASSERT(entity != INVALID_ENTITYID);
 						if (deleted)
 						{
 							world->entityPool.Remove(entity);
@@ -1187,7 +1194,7 @@ namespace ECS
 				for (size_t row = 0; row < count; row++)
 				{
 					EntityID entity = entities[row];
-					ECS_ASSERT(entity != INVALID_ENTITY);
+					ECS_ASSERT(entity != INVALID_ENTITYID);
 					if (deleted)
 					{
 						world->entityPool.Remove(entity);
@@ -1371,7 +1378,7 @@ namespace ECS
 		if (!compRecord->typeInfoInited)
 		{
 			EntityID type = GetRealTypeID(world, compID);
-			if (type != INVALID_ENTITY)
+			if (type != INVALID_ENTITYID)
 			{
 				compRecord->typeInfo = GetComponentTypeInfo(world, type);
 				ECS_ASSERT(compRecord->typeInfo != nullptr);
@@ -1408,7 +1415,7 @@ namespace ECS
 			if (ECS_HAS_ROLE(compId, EcsRolePair))
 			{
 				EntityID relation = ECS_GET_PAIR_FIRST(compId);
-				if (relation != INVALID_ENTITY)
+				if (relation != INVALID_ENTITYID)
 				{
 					if (relations.count(relation) == 0)
 					{
@@ -1419,7 +1426,7 @@ namespace ECS
 				}
 
 				EntityID obj = ECS_GET_PAIR_SECOND(compId);
-				if (obj != INVALID_ENTITY)
+				if (obj != INVALID_ENTITYID)
 				{
 					if (objects.count(relation) == 0)
 					{
@@ -1602,7 +1609,7 @@ namespace ECS
 			if (ECS_HAS_ROLE(compID, EcsRolePair))
 			{
 				U32 relation = ECS_GET_PAIR_FIRST(compID);
-				if (relation != INVALID_ENTITY)
+				if (relation != INVALID_ENTITYID)
 					flags |= TableFlagHasRelation;
 
 				if (relation == EcsRelationIsA)

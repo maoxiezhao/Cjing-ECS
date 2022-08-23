@@ -155,7 +155,7 @@ namespace ECS
 
 	bool IsCompIDValid(EntityID id)
 	{
-		if (id == INVALID_ENTITY)
+		if (id == INVALID_ENTITYID)
 			return false;
 
 		if (CheckIDHasPropertyNone(id))
@@ -178,8 +178,8 @@ namespace ECS
 		// if entity has generation, just check is alived
 		// if entity does not have generation, get a new entity with generation
 
-		if (entity == INVALID_ENTITY)
-			return INVALID_ENTITY;
+		if (entity == INVALID_ENTITYID)
+			return INVALID_ENTITYID;
 
 		if (IsEntityAlive(world, entity))
 			return entity;
@@ -188,16 +188,20 @@ namespace ECS
 		ECS_ASSERT((U32)entity == entity);
 
 		// Get current alived entity with generation
+		world = GetWorld(world);
 		EntityID current = world->entityPool.GetAliveIndex(entity);
-		if (current == INVALID_ENTITY)
-			return INVALID_ENTITY;
+		if (current == INVALID_ENTITYID)
+			return INVALID_ENTITYID;
 
 		return current;
 	}
 
 	InfoComponent* GetComponentInfo(WorldImpl* world, EntityID compID)
 	{
-		return static_cast<InfoComponent*>(GetComponent(world, compID, ECS_ENTITY_ID(InfoComponent)));
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(compID != INVALID_ENTITYID);
+		world = GetWorld(world);
+		return (InfoComponent*)(GetComponent(world, compID, ECS_ENTITY_ID(InfoComponent)));
 	}
 
 	EntityID GetRealTypeID(WorldImpl* world, EntityID compID)
@@ -216,14 +220,14 @@ namespace ECS
 
 			// Tag dose not have type info, return zero
 			if (HasComponent(world, relation, EcsPropertyTag))
-				return INVALID_ENTITY;
+				return INVALID_ENTITYID;
 
 			InfoComponent* info = GetComponentInfo(world, relation);
 			if (info && info->size != 0)
 				return relation;
 
 			EntityID object = ECS_GET_PAIR_SECOND(compID);
-			if (object != INVALID_ENTITY)
+			if (object != INVALID_ENTITYID)
 			{
 				object = GetAliveEntity(world, object);
 				info = GetComponentInfo(world, object);
@@ -251,7 +255,7 @@ namespace ECS
 
 	EntityID CreateNewEntityID(WorldImpl* world)
 	{
-		Stage* stage = GetStageFromWorld(&world);
+		world = GetWorld(world);
 		if (world->isMultiThreaded)
 		{
 			ECS_ASSERT(world->lastID < UINT_MAX);
@@ -265,21 +269,22 @@ namespace ECS
 
 	EntityID CreateNewComponentID(WorldImpl* world)
 	{
+		world = GetWorld(world);
 		if (world->isReadonly)
 		{
 			// Can't create new component id when in multithread
 			ECS_ASSERT(GetStageCount(world) <= 1);
 		}
 
-		EntityID ret = INVALID_ENTITY;
+		EntityID ret = INVALID_ENTITYID;
 		if (world->lastComponentID < HiComponentID)
 		{
 			do {
 				ret = world->lastComponentID++;
-			} while (EntityExists(world, ret) != INVALID_ENTITY && ret <= HiComponentID);
+			} while (EntityExists(world, ret) != INVALID_ENTITYID && ret <= HiComponentID);
 		}
 
-		if (ret == INVALID_ENTITY || ret >= HiComponentID)
+		if (ret == INVALID_ENTITYID || ret >= HiComponentID)
 			ret = CreateNewEntityID(world);
 
 		return ret;
@@ -287,6 +292,7 @@ namespace ECS
 
 	void SetEntityNameImpl(WorldImpl* world, EntityID entity, const char* name)
 	{
+		world = GetWorld(world);
 		{
 			std::lock_guard<std::mutex> lock(world->nameMutex);
 			world->entityNameMap[Util::HashFunc(name, strlen(name))] = entity;
@@ -296,6 +302,8 @@ namespace ECS
 
 	bool EntityTraverseAdd(WorldImpl* world, EntityID entity, const EntityCreateDesc& desc, bool nameAssigned, bool isNewEntity)
 	{
+		world = GetWorld(world);
+
 		EntityTable* srcTable = nullptr, * table = nullptr;
 		EntityInfo* info = nullptr;
 
@@ -362,16 +370,16 @@ namespace ECS
 		bool isNewEntity = false;
 		bool nameAssigned = false;
 		EntityID result = desc.entity;
-		if (result == INVALID_ENTITY)
+		if (result == INVALID_ENTITYID)
 		{
 			if (name != nullptr)
 			{
 				result = FindEntityIDByName(world, name);
-				if (result != INVALID_ENTITY)
+				if (result != INVALID_ENTITYID)
 					nameAssigned = true;
 			}
 
-			if (result == INVALID_ENTITY)
+			if (result == INVALID_ENTITYID)
 			{
 				if (desc.useComponentID)
 					result = CreateNewComponentID(world);
@@ -390,14 +398,15 @@ namespace ECS
 			DeferredAddEntity(world, stage, result, name, desc, isNewEntity, nameAssigned);
 		else
 			if (!EntityTraverseAdd(world, result, desc, nameAssigned, isNewEntity))
-				return INVALID_ENTITY;
+				return INVALID_ENTITYID;
 
 		return result;
 	}
 
 	EntityID FindEntityIDByName(WorldImpl* world, const char* name)
 	{
-		EntityID ret = INVALID_ENTITY;
+		world = GetWorld(world);
+		EntityID ret = INVALID_ENTITYID;
 		{
 			// First find from entityNameMap
 			std::lock_guard<std::mutex> lock(world->nameMutex);
@@ -429,7 +438,7 @@ namespace ECS
 
 	void DeleteEntity(WorldImpl* world, EntityID entity)
 	{
-		ECS_ASSERT(entity != INVALID_ENTITY);
+		ECS_ASSERT(entity != INVALID_ENTITYID);
 
 		auto stage = GetStageFromWorld(&world);
 		if (DeferDelete(world, stage, entity))
@@ -455,6 +464,7 @@ namespace ECS
 
 	const EntityType& GetEntityType(WorldImpl* world, EntityID entity)
 	{
+		world = GetWorld(world);
 		const EntityInfo* info = world->entityPool.Get(entity);
 		if (info == nullptr || info->table == nullptr)
 			return EMPTY_ENTITY_TYPE;
@@ -497,14 +507,14 @@ namespace ECS
 	{
 		EntityTable* table = GetTable(world, entity);
 		if (table == nullptr)
-			return INVALID_ENTITY;
+			return INVALID_ENTITYID;
 
 		TableComponentRecord* record = GetTableRecord(world, table, ECS_MAKE_PAIR(relation, EcsPropertyNone));
 		if (record == nullptr)
-			return INVALID_ENTITY;
+			return INVALID_ENTITYID;
 
 		if (index >= (U32)record->data.count)
-			return INVALID_ENTITY;
+			return INVALID_ENTITYID;
 
 		return ECS_GET_PAIR_SECOND(table->type[record->data.column + index]);
 	}
@@ -524,6 +534,7 @@ namespace ECS
 
 	void EnsureEntity(WorldImpl* world, EntityID entity)
 	{
+		world = GetWorld(world);
 		if (ECS_HAS_ROLE(entity, EcsRolePair))
 		{
 			EntityID re = ECS_GET_PAIR_FIRST(entity);
@@ -546,19 +557,29 @@ namespace ECS
 
 	bool IsEntityAlive(WorldImpl* world, EntityID entity)
 	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(entity != INVALID_ENTITYID);
+
+		world = GetWorld(world);
 		return world->entityPool.Get(entity) != nullptr;
 	}
 
 	bool EntityExists(WorldImpl* world, EntityID entity)
 	{
-		ECS_ASSERT(entity != INVALID_ENTITY);
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(entity != INVALID_ENTITYID);
+		world = GetWorld(world);
 		return world->entityPool.CheckExsist(entity);
 	}
 
 	bool IsEntityValid(WorldImpl* world, EntityID entity)
 	{
-		if (entity == INVALID_ENTITY)
+		ECS_ASSERT(world != nullptr);
+
+		if (entity == INVALID_ENTITYID)
 			return false;
+
+		world = GetWorld(world);
 
 		// Entity identifiers should not contain flag bits
 		if (entity & ECS_ROLE_MASK)
@@ -580,31 +601,25 @@ namespace ECS
 
 	void AddComponentForEntity(WorldImpl* world, EntityID entity, EntityID compID)
 	{
+		world = GetWorld(world);
 		EntityInfo* info = world->entityPool.Ensure(entity);
 		AddComponentForEntity(world, entity, info, compID);
 	}
 
 	EntityID InitNewComponent(WorldImpl* world, const ComponentCreateDesc& desc)
 	{
+		ECS_ASSERT(ECS_CHECK_OBJECT(&world->base, WorldImpl));
+
 		EntityID entityID = CreateEntityID(world, desc.entity);
-		if (entityID == INVALID_ENTITY)
-			return INVALID_ENTITY;
+		if (entityID == INVALID_ENTITYID)
+			return INVALID_ENTITYID;
 
-		bool added = false;
-		InfoComponent* info = static_cast<InfoComponent*>(GetOrCreateMutableByID(world, entityID, ECS_ENTITY_ID(InfoComponent), &added));
+		InfoComponent* info = static_cast<InfoComponent*>(GetMutableComponent(world, entityID, ECS_ENTITY_ID(InfoComponent)));
 		if (info == nullptr)
-			return INVALID_ENTITY;
+			return INVALID_ENTITYID;
 
-		if (added)
-		{
-			info->size = desc.size;
-			info->algnment = desc.alignment;
-		}
-		else
-		{
-			ECS_ASSERT(info->size == desc.size);
-			ECS_ASSERT(info->algnment == desc.alignment);
-		}
+		info->size = desc.size;
+		info->algnment = desc.alignment;
 
 		if (entityID >= world->lastComponentID && entityID < HiComponentID)
 			world->lastComponentID = (U32)(entityID + 1);
@@ -645,10 +660,10 @@ namespace ECS
 			ECS_ASSERT(rel != 0);
 
 			EntityID obj = ECS_GET_PAIR_SECOND(compID);
-			if (obj != INVALID_ENTITY)
+			if (obj != INVALID_ENTITYID)
 			{
 				obj = GetAliveEntity(world, obj);
-				ECS_ASSERT(obj != INVALID_ENTITY);
+				ECS_ASSERT(obj != INVALID_ENTITYID);
 			}
 		}
 		return ret;
@@ -656,6 +671,7 @@ namespace ECS
 
 	ComponentRecord* EnsureComponentRecord(WorldImpl* world, EntityID compID)
 	{
+		world = GetWorld(world);
 		auto it = world->compRecordMap.find(StripGeneration(compID));
 		if (it != world->compRecordMap.end())
 			return it->second;
@@ -692,19 +708,21 @@ namespace ECS
 
 	void RemoveComponentRecord(WorldImpl* world, EntityID id, ComponentRecord* compRecord)
 	{
+		world = GetWorld(world);
 		if (FreeComponentRecord(compRecord))
 			world->compRecordMap.erase(StripGeneration(id));
 	}
 
 	ComponentRecord* GetComponentRecord(WorldImpl* world, EntityID id)
 	{
+		world = GetWorld(world);
 		auto it = world->compRecordMap.find(StripGeneration(id));
 		if (it == world->compRecordMap.end())
 			return nullptr;
 		return it->second;
 	}
 
-	void* GetOrCreateMutable(WorldImpl* world, EntityID entity, EntityID compID, EntityInfo* info, bool* isAdded)
+	void* GetMutableComponentImpl(WorldImpl* world, EntityID entity, EntityID compID, EntityInfo* info)
 	{
 		ECS_ASSERT(compID != 0);
 		ECS_ASSERT(info != nullptr);
@@ -725,39 +743,26 @@ namespace ECS
 			ECS_ASSERT(info != nullptr);
 			ECS_ASSERT(info->table != nullptr);
 			ret = GetComponentFromTable(world , *info->table, info->row, compID);
-
-			if (isAdded != nullptr)
-				*isAdded = true;
-		}
-		else
-		{
-			if (isAdded != nullptr)
-				*isAdded = false;
 		}
 
 		return ret;
 	}
 
-	void* GetOrCreateMutableByID(WorldImpl* world, EntityID entity, EntityID compID, bool* added)
+	void* GetMutableComponent(WorldImpl* world, EntityID entity, EntityID compID)
 	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(IsEntityValid(world, entity));
+
 		auto stage = GetStageFromWorld(&world);
-		void* outValue;
-		if (DeferSet(world, stage, entity, EcsOpMut, compID, 0, nullptr, &outValue))
-			return outValue;
+		void* out = nullptr;
+		if (DeferSet(world, stage, entity, EcsOpMut, compID, 0, nullptr, &out))
+			return out;
 
 		EntityInfo* info = world->entityPool.Ensure(entity);
-		void* ret = GetOrCreateMutable(world, entity, compID, info, added);
-		ECS_ASSERT(ret != nullptr);
+		void* comp = GetMutableComponentImpl(world, entity, compID, info);
+		ECS_ASSERT(comp != nullptr);
 
 		EndDefer(world);
-		return ret;
-	}
-
-	void* GetOrCreateComponent(WorldImpl* world, EntityID entity, EntityID compID)
-	{
-		bool isAdded = false;
-		void* comp = GetOrCreateMutableByID(world, entity, compID, &isAdded);
-		ECS_ASSERT(comp != nullptr);
 		return comp;
 	}
 
@@ -798,8 +803,13 @@ namespace ECS
 		EndDefer(world);
 	}
 
-	void* GetComponent(WorldImpl* world, EntityID entity, EntityID compID)
+	const void* GetComponent(WorldImpl* world, EntityID entity, EntityID compID)
 	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(IsEntityValid(world, entity));
+
+		world = GetWorld(world);
+
 		EntityInfo* info = world->entityPool.Get(entity);
 		if (info == nullptr || info->table == nullptr)
 			return nullptr;
@@ -817,7 +827,12 @@ namespace ECS
 
 	bool HasComponent(WorldImpl* world, EntityID entity, EntityID compID)
 	{
-		ECS_ASSERT(compID != INVALID_ENTITY);
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(IsEntityValid(world, entity));
+		ECS_ASSERT(compID != INVALID_ENTITYID);
+
+		world = GetWorld(world);
+
 		EntityTable* table = GetTable(world, entity);
 		if (table == nullptr)
 			return false;
@@ -828,22 +843,27 @@ namespace ECS
 	void ModifiedComponent(WorldImpl* world, EntityID entity, EntityID compID)
 	{
 		ECS_ASSERT(world != nullptr);
+		auto stage = GetStageFromWorld(&world);
+		if (DeferModified(world, stage, entity, compID))
+			return;
 
 		// Table column dirty
 		EntityInfo* info = world->entityPool.Get(entity);
 		if (info->table != nullptr)
 			info->table->SetColumnDirty(compID);
+
+		EndDefer(world);
 	}
 
 	void SetComponent(WorldImpl* world, EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove)
 	{
-		EntityInfo* info = world->entityPool.Ensure(entity);
-
 		auto stage = GetStageFromWorld(&world);
+
+		EntityInfo* info = world->entityPool.Ensure(entity);
 		if (DeferSet(world, stage, entity, EcsOpSet, compID, size, ptr, nullptr))
 			return;
 
-		void* dst = GetOrCreateMutable(world, entity, compID, info, NULL);
+		void* dst = GetMutableComponentImpl(world, entity, compID, info);
 		ECS_ASSERT(dst != NULL);
 		if (ptr)
 		{
@@ -894,12 +914,14 @@ namespace ECS
 
 	ComponentTypeInfo* EnsureComponentTypInfo(WorldImpl* world, EntityID compID)
 	{
+		world = GetWorld(world);
 		return world->compTypePool.Ensure(compID);
 	}
 
 	// Set component type info for component id
 	void SetComponentTypeInfo(WorldImpl* world, EntityID compID, const ComponentTypeHooks& info)
 	{
+		world = GetWorld(world);
 		ComponentTypeInfo* compTypeInfo = world->compTypePool.Ensure(compID);
 		size_t size = compTypeInfo->size;
 		size_t alignment = compTypeInfo->alignment;
@@ -925,11 +947,13 @@ namespace ECS
 
 	bool HasComponentTypeInfo(WorldImpl* world, EntityID compID)
 	{
+		world = GetWorld(world);
 		return GetComponentTypeInfo(world, compID) != nullptr;
 	}
 
 	ComponentTypeInfo* GetComponentTypeInfo(WorldImpl* world, EntityID compID)
 	{
+		world = GetWorld(world);
 		return world->compTypePool.Get(compID);
 	}
 

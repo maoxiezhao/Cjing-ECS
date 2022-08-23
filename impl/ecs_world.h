@@ -38,11 +38,10 @@ namespace ECS
 
 	// Component
 	EntityID InitNewComponent(WorldImpl* world, const ComponentCreateDesc& desc);
-	void* GetOrCreateComponent(WorldImpl* world, EntityID entity, EntityID compID);
-	void* GetOrCreateMutableByID(WorldImpl* world, EntityID entity, EntityID compID, bool* added);
+	void* GetMutableComponent(WorldImpl* world, EntityID entity, EntityID compID);
 	void AddComponent(WorldImpl* world, EntityID entity, EntityID compID);
 	void RemoveComponent(WorldImpl* world, EntityID entity, EntityID compID);
-	void* GetComponent(WorldImpl* world, EntityID entity, EntityID compID);
+	const void* GetComponent(WorldImpl* world, EntityID entity, EntityID compID);
 	void SetComponent(WorldImpl* world, EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove);
 	bool HasComponent(WorldImpl* world, EntityID entity, EntityID compID);
 	void ModifiedComponent(WorldImpl* world, EntityID entity, EntityID compID);

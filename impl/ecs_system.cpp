@@ -15,36 +15,36 @@ namespace ECS
 	EntityID InitNewSystem(WorldImpl* world, const SystemCreateDesc& desc)
 	{
 		EntityID entity = desc.entity;  
-		if (entity == INVALID_ENTITY)
+		if (entity == INVALID_ENTITYID)
 		{
 			EntityCreateDesc entityDesc = {};
 			entity = CreateEntityID(world, entityDesc);
 		}
 	
-		bool newAdded = false;
-		SystemComponent* sysComponent = static_cast<SystemComponent*>(GetOrCreateMutableByID(world, entity, ECS_ENTITY_ID(SystemComponent), &newAdded));
-		if (newAdded)
-		{
-			memset(sysComponent, 0, sizeof(SystemComponent));
-			sysComponent->entity = entity;
-			sysComponent->action = desc.action;
-			sysComponent->invoker = desc.invoker;
-			sysComponent->invokerDeleter = desc.invokerDeleter;
-			sysComponent->multiThreaded = desc.multiThreaded;
+		if (HasComponent(world, entity, ECS_ENTITY_ID(SystemComponent)))
+			return entity;
 
-			QueryImpl* queryInfo = CreateQuery(world, desc.query);
-			if (queryInfo == nullptr)
-				return INVALID_ENTITY;
+		SystemComponent* sysComponent = static_cast<SystemComponent*>(GetMutableComponent(world, entity, ECS_ENTITY_ID(SystemComponent)));
+		memset(sysComponent, 0, sizeof(SystemComponent));
+		sysComponent->entity = entity;
+		sysComponent->action = desc.action;
+		sysComponent->invoker = desc.invoker;
+		sysComponent->invokerDeleter = desc.invokerDeleter;
+		sysComponent->multiThreaded = desc.multiThreaded;
 
-			sysComponent->query = queryInfo;
-		}
+		QueryImpl* queryInfo = CreateQuery(world, desc.query);
+		if (queryInfo == nullptr)
+			return INVALID_ENTITYID;
+
+		sysComponent->query = queryInfo;
+
 		return entity;
 	}
 
 	void RunSystem(WorldImpl* world, EntityID entity)
 	{
-		ECS_ASSERT(entity != INVALID_ENTITY);
-		SystemComponent* sysComponent = static_cast<SystemComponent*>(GetComponent(world, entity, ECS_ENTITY_ID(SystemComponent)));
+		ECS_ASSERT(entity != INVALID_ENTITYID);
+		SystemComponent* sysComponent = (SystemComponent*)(GetComponent(world, entity, ECS_ENTITY_ID(SystemComponent)));
 		if (sysComponent == nullptr)
 			return;
 

@@ -79,7 +79,7 @@ namespace ECS
 	#define ECS_GENERATION_MASK           (0xFFFFull << 32)
 	#define ECS_GENERATION(e)             ((e & ECS_GENERATION_MASK) >> 32)
 
-	static const EntityID INVALID_ENTITY = 0;
+	static const EntityID INVALID_ENTITYID = 0;
 	static const EntityType EMPTY_ENTITY_TYPE = EntityType();
 	static const size_t MAX_QUERY_ITEM_COUNT = 16;
 
@@ -341,7 +341,7 @@ namespace ECS
 
 	struct EntityCreateDesc
 	{
-		EntityID entity = INVALID_ENTITY;
+		EntityID entity = INVALID_ENTITYID;
 		const char* name = nullptr;
 		bool useComponentID = false;	// For component id (0~256)
 	};

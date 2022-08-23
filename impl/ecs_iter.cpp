@@ -94,7 +94,7 @@ namespace ECS
 	size_t IteratorGetSizeForID(WorldImpl* world, EntityID id)
 	{
 		EntityID typeID = GetRealTypeID(world, id);
-		if (typeID == INVALID_ENTITY)
+		if (typeID == INVALID_ENTITYID)
 			return 0;
 
 		auto info = GetComponentTypeInfo(world, typeID);
@@ -135,16 +135,19 @@ namespace ECS
 		return false;
 	}
 
-	void IteratorPopulateData(WorldImpl* world, Iterator& iter, EntityTable* table, I32 offset, size_t* sizes, void** ptrs)
+	void IteratorPopulateData(WorldImpl* world, Iterator& iter, EntityTable* table, I32 offset, I32 count, size_t* sizes, void** ptrs)
 	{
 		iter.table = table;
-		iter.count = 0;
+		iter.offset = offset;
+		iter.count = count;
 
 		if (table != nullptr)
 		{
-			iter.count = GetTableCount(table);
+			if (iter.count == 0)
+				iter.count = GetTableCount(table);
+
 			if (iter.count > 0)
-				iter.entities = table->entities.data();
+				iter.entities = table->entities.data() + offset;
 			else
 				iter.entities = nullptr;
 		}
@@ -213,14 +216,19 @@ namespace ECS
 			perWorker = count / numWorker;
 			first = perWorker * workerIndex;
 			
-			// If there is still left, let the previous workers execute one more
+			// If there is still left, let the workers whose index is less than count execute one more entity
 			count -= perWorker * numWorker;
 			if (count > 0)
 			{
 				if (workerIndex < count)
+				{
 					perWorker++;
+					first += workerIndex;
+				}
 				else
+				{
 					first += count;
+				}
 			}
 
 			if (perWorker == 0 && it->table == nullptr)

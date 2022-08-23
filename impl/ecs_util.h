@@ -189,18 +189,10 @@ namespace Util
 					ECS_ASSERT(false);
 
 				if (page->next)
-				{
 					page = page->next;
-				}
 				else
-				{
-					size_t pageOffset = ECS_ALIGN(sizeof(Stackpage), 16);
-					Stackpage* newPage = (Stackpage*)ECS_MALLOC(pageOffset + ECS_STACK_PAGE_SIZE);
-					newPage->data = newPage + pageOffset;
-					newPage->next = nullptr;
+					page = page->next = NewPage();
 
-					page = page->next = newPage;
-				}
 				sp = 0;
 				newSp = size;
 				cur = page;
@@ -208,6 +200,18 @@ namespace Util
 
 			page->sp = newSp;
 			return ECS_OFFSET(page->data, sp);
+		}
+
+	private:
+
+#define STACK_PAGE_OFFSET ECS_ALIGN(sizeof(Stackpage), 16)
+
+		Stackpage* NewPage() 
+		{
+			Stackpage* newPage = (Stackpage*)ECS_MALLOC(STACK_PAGE_OFFSET + ECS_STACK_PAGE_SIZE);
+			newPage->data = ECS_OFFSET(newPage, STACK_PAGE_OFFSET);
+			newPage->next = nullptr;
+			return newPage;
 		}
 	};
 

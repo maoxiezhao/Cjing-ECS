@@ -29,28 +29,29 @@ namespace ECS
 
 		EntityCreateDesc entityDesc = {};
 		EntityID entity = CreateEntityID(world, entityDesc);
-		if (entity == INVALID_ENTITY)
-			return INVALID_ENTITY;
+		if (entity == INVALID_ENTITYID)
+			return INVALID_ENTITYID;
 
-		bool newAdded = false;
-		PipelineComponent* pipeline = static_cast<PipelineComponent*>(GetOrCreateMutableByID(world, entity, ECS_ENTITY_ID(PipelineComponent), &newAdded));
-		if (newAdded)
+		if (HasComponent(world, entity, ECS_ENTITY_ID(PipelineComponent)))
+			return entity;
+
+		PipelineComponent* pipeline = static_cast<PipelineComponent*>(GetMutableComponent(world, entity, ECS_ENTITY_ID(PipelineComponent)));
+		ECS_ASSERT(pipeline != nullptr);
+
+		QueryCreateDesc queryDesc = desc.query;
+		if (queryDesc.orderBy == nullptr)
+			queryDesc.orderBy = EntityCompare;	// Keep order by system adding sequence
+
+		QueryImpl* query = CreateQuery(world, queryDesc);
+		if (query == nullptr)
 		{
-			QueryCreateDesc queryDesc = desc.query;
-			if (queryDesc.orderBy == nullptr)
-				queryDesc.orderBy = EntityCompare;	// Keep order by system adding sequence
-
-			QueryImpl* query = CreateQuery(world, queryDesc);
-			if (query == nullptr)
-			{
-				DeleteEntity(world, entity);
-				return INVALID_ENTITY;
-			}
-
-			pipeline->entity = entity;
-			pipeline->query = query;
+			DeleteEntity(world, entity);
+			return INVALID_ENTITYID;
 		}
 
+		pipeline->entity = entity;
+		pipeline->query = query;
+	
 		return entity;
 	}
 
@@ -301,20 +302,20 @@ namespace ECS
 	void RunPipeline(WorldImpl* world, EntityID pipeline)
 	{
 		ECS_ASSERT(world != nullptr);
-		ECS_ASSERT(pipeline != INVALID_ENTITY);
+		ECS_ASSERT(pipeline != INVALID_ENTITYID);
 		ECS_ASSERT(!world->isReadonly);
 		WorkerProgress(world, pipeline);
 	}
 
-	void SyncPipelineWorker(ObjectBase* obj)
+	void SyncPipelineWorker(WorldImpl* world)
 	{
-		auto world = GetWorld(obj);
+		world = GetWorld(world);
 		I32 stageCount = GetStageCount(world);
 	}
 
-	void PipelineWorkerBegin(ObjectBase* obj)
+	void PipelineWorkerBegin(WorldImpl* world)
 	{
-		WorldImpl* world = GetWorld(obj);
+		world = GetWorld(world);
 		ECS_ASSERT(world != nullptr);
 
 		I32 stageCount = GetStageCount(world);
@@ -324,9 +325,9 @@ namespace ECS
 		}
 	}
 
-	void PipelineWorkerEnd(ObjectBase* obj)
+	void PipelineWorkerEnd(WorldImpl* world)
 	{
-		WorldImpl* world = GetWorld(obj);
+		world = GetWorld(world);
 		ECS_ASSERT(world != nullptr);
 
 		I32 stageCount = GetStageCount(world);
@@ -337,7 +338,7 @@ namespace ECS
 		}
 		else
 		{
-			SyncPipelineWorker(obj);
+			SyncPipelineWorker(world);
 		}
 	}
 
@@ -356,7 +357,7 @@ namespace ECS
 		// Sync all workers
 		else
 		{
-			SyncPipelineWorker(&world->base);
+			SyncPipelineWorker(world);
 		}
 
 		// Readonly begin again
@@ -380,7 +381,7 @@ namespace ECS
 		I32 stageCount = GetStageCount(stage->world);
 
 		// Workder begin
-		PipelineWorkerBegin(stage->threadCtx);
+		PipelineWorkerBegin((WorldImpl*)stage);
 
 		PipelineOperation* curOp = pipelineComp->curOp;
 		for (int i = 0; i < curOp->systems.size(); i++)
@@ -402,7 +403,7 @@ namespace ECS
 		}
 
 		// Worker end
-		PipelineWorkerEnd(stage->threadCtx);
+		PipelineWorkerEnd((WorldImpl*)stage);
 	}
 
 	void InitPipelineComponent(WorldImpl* world)

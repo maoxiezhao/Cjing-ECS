@@ -282,7 +282,7 @@ namespace ECS
 		C* GetSingletonComponent()
 		{
 			EntityID compID = ComponentType<C>::ID(*world);
-			return static_cast<C*>(GetOrCreateComponent(world, compID, compID));
+			return static_cast<C*>(GetMutableComponent(world, compID, compID));
 		}
 
 		template <typename Func>
@@ -374,7 +374,7 @@ namespace ECS
 	public:
 		IDView() :
 			world(nullptr),
-			entityID(INVALID_ENTITY)
+			entityID(INVALID_ENTITYID)
 		{}
 
 		explicit IDView(EntityID id) : 
@@ -409,7 +409,7 @@ namespace ECS
 
 	protected:
 		WorldImpl* world = nullptr;
-		EntityID entityID = INVALID_ENTITY;
+		EntityID entityID = INVALID_ENTITYID;
 	};
 
 	/// <summary>
@@ -420,7 +420,7 @@ namespace ECS
 		EntityView() : IDView()  { }
 
 		bool IsValid()const {
-			return world && entityID != INVALID_ENTITY && EntityExists(world, entityID);
+			return world && entityID != INVALID_ENTITYID && EntityExists(world, entityID);
 		}
 
 		explicit operator bool()const {
@@ -446,14 +446,14 @@ namespace ECS
 	template<typename C>
 	static void SetComponent(WorldImpl* world, EntityID entity, EntityID compID, const C& comp)
 	{
-		C& dstComp = *static_cast<C*>(GetOrCreateComponent(world, entity, compID));
+		C& dstComp = *static_cast<C*>(GetMutableComponent(world, entity, compID));
 		dstComp = comp;
 	}
 
 	template<typename C>
 	static void SetComponent(WorldImpl* world, EntityID entity, EntityID compID, C&& comp)
 	{
-		C& dstComp = *static_cast<C*>(GetOrCreateComponent(world, entity, compID));
+		C& dstComp = *static_cast<C*>(GetMutableComponent(world, entity, compID));
 		dstComp = ECS_MOV(comp);
 	}
 
@@ -628,35 +628,68 @@ namespace ECS
 		}
 
 		template<typename T>
-		T* Get()const
+		const T* Get()const
 		{
 			EntityID compID = ComponentType<T>::ID(*world);
-			return static_cast<T*>(GetComponent(world, entityID, compID));
+			return static_cast<const T*>(GetComponent(world, entityID, compID));
 		}
 
-		void* Get(EntityID compID)const
+		const void* Get(EntityID compID)const
 		{
 			return GetComponent(world, entityID, compID);
 		}
 
 		template<typename First>
-		First* Get(EntityID second)const
+		const First* Get(EntityID second)const
 		{
 			EntityID compID = ComponentType<First>::ID(*world);
-			return static_cast<First*>(GetComponent(world, entityID, ECS_MAKE_PAIR(compID, second)));
+			return static_cast<const First*>(GetComponent(world, entityID, ECS_MAKE_PAIR(compID, second)));
 		}
 
 		template<typename First, typename Second>
-		First* Get()const
+		const First* Get()const
 		{
 			return this->Get<First>(ComponentType<Second>::ID(*world));
 		}
 
 		template <typename R, typename O, typename P = Util::Pair<R, O>, typename C = typename Util::RealType<P>::type>
-		C* Get(EntityID entity)
+		const C* Get()
 		{
 			EntityID compID = ComponentType<P>::ID(*world);
-			return static_cast<C*>(GetComponent(world, entity, compID));
+			return static_cast<const C*>(GetComponent(world, entityID, compID));
+		}
+
+
+		template<typename T>
+		T* GetMut()const
+		{
+			EntityID compID = ComponentType<T>::ID(*world);
+			return static_cast<T*>(GetMutableComponent(world, entityID, compID));
+		}
+
+		void* GetMut(EntityID compID)const
+		{
+			return GetMutableComponent(world, entityID, compID);
+		}
+
+		template<typename First>
+		First* GetMut(EntityID second)const
+		{
+			EntityID compID = ComponentType<First>::ID(*world);
+			return static_cast<First*>(GetMutableComponent(world, entityID, ECS_MAKE_PAIR(compID, second)));
+		}
+
+		template<typename First, typename Second>
+		First* GetMut()const
+		{
+			return this->GetMut<First>(ComponentType<Second>::ID(*world));
+		}
+
+		template <typename R, typename O, typename P = Util::Pair<R, O>, typename C = typename Util::RealType<P>::type>
+		C* GetMut()
+		{
+			EntityID compID = ComponentType<P>::ID(*world);
+			return static_cast<C*>(GetMutableComponent(world, entityID, compID));
 		}
 
 		Entity GetParent()
@@ -680,13 +713,15 @@ namespace ECS
 		void Destroy()
 		{
 			DeleteEntity(world, entityID);
-			entityID = INVALID_ENTITY;
+			entityID = INVALID_ENTITYID;
 		}
 
 		static Entity Null() {
 			return Entity();
 		}
 	};
+
+#define INVALID_ENTITY ECS::Entity::Null()
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Query
@@ -1016,7 +1051,7 @@ namespace ECS
 		explicit System()
 		{
 			world = nullptr;
-			entityID = INVALID_ENTITY;
+			entityID = INVALID_ENTITYID;
 		}
 
 		explicit System(WorldImpl* world, const SystemCreateDesc& desc) :
@@ -1026,7 +1061,7 @@ namespace ECS
 
 		void Run()
 		{
-			if (entityID != INVALID_ENTITY)
+			if (entityID != INVALID_ENTITYID)
 				RunSystem(world, entityID);
 		}
 	};
@@ -1096,7 +1131,7 @@ namespace ECS
 		explicit Pipeline()
 		{
 			world = nullptr;
-			entityID = INVALID_ENTITY;
+			entityID = INVALID_ENTITYID;
 		}
 
 		explicit Pipeline(WorldImpl* world, const PipelineCreateDesc& desc) :

@@ -267,7 +267,7 @@ namespace _
 				n = Util::Typename<C>();
 
 			ComponentCreateDesc desc = {};
-			desc.entity.entity = INVALID_ENTITY;
+			desc.entity.entity = INVALID_ENTITYID;
 			desc.entity.name = n;
 			desc.entity.useComponentID = true;
 			desc.size = size;
@@ -277,7 +277,7 @@ namespace _
 
 		static bool Registered(WorldImpl& world)
 		{
-			return componentID != INVALID_ENTITY && EntityExists(&world, componentID);
+			return componentID != INVALID_ENTITYID && EntityExists(&world, componentID);
 		}
 	};
 	template<typename C>
@@ -285,7 +285,7 @@ namespace _
 	template<typename C>
 	size_t ComponentTypeRegister<C>::alignment = 0;
 	template<typename C>
-	EntityID ComponentTypeRegister<C>::componentID = INVALID_ENTITY;
+	EntityID ComponentTypeRegister<C>::componentID = INVALID_ENTITYID;
 
 	template <typename T>
 	using is_const_p = std::is_const< std::remove_pointer_t<T> >;

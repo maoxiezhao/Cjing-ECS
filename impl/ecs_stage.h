@@ -13,7 +13,7 @@ namespace ECS
 	I32 GetStageID(ObjectBase* threadCtx);
 	Stage* GetStage(WorldImpl* world, I32 stageID);
 	Stage* GetStageFromWorld(WorldImpl** world);
-	WorldImpl* GetWorld(ObjectBase* threadCtx);
+	WorldImpl* GetWorld(WorldImpl* threadCtx);
 
 	void BeginDefer(WorldImpl* world);
 	void EndDefer(WorldImpl* world);
@@ -27,4 +27,5 @@ namespace ECS
 	bool DeferAddRemoveID(WorldImpl* world, Stage* stage, EntityID entity, DeferOperationKind kind, EntityID compID);
 	bool DeferDelete(WorldImpl* world, Stage* stage, EntityID entity);
 	bool DeferSet(WorldImpl* world, Stage* stage, EntityID entity, DeferOperationKind kind, EntityID compID, size_t size, const void* value, void** valueOut);
+	bool DeferModified(WorldImpl* world, Stage* stage, EntityID entity, EntityID id);
 }
