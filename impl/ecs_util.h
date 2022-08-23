@@ -6,14 +6,14 @@ namespace ECS
 {
 namespace Util
 {
-    namespace _ {
-        char* GetTypeName(char* typeName, const char* funcName, size_t len);
-    }
+	namespace _ {
+		char* GetTypeName(char* typeName, const char* funcName, size_t len);
+	}
 
-    template <size_t N>
-    static constexpr size_t GetStringLength(char const (&)[N]) {
-        return N - 1;
-    }
+	template <size_t N>
+	static constexpr size_t GetStringLength(char const (&)[N]) {
+		return N - 1;
+	}
 
 #if defined(_WIN32)
 #define ECS_FUNC_NAME_FRONT(type, name) ((sizeof(#type) + sizeof(" __cdecl ECS::Util::<") + sizeof(#name)) - 3u)
@@ -24,16 +24,16 @@ namespace Util
 #endif
 
 #define ECS_FUNC_TYPE_LEN(type, name, str)\
-    (GetStringLength(str) - (ECS_FUNC_NAME_FRONT(type, name) + ECS_FUNC_NAME_BACK))
+(GetStringLength(str) - (ECS_FUNC_NAME_FRONT(type, name) + ECS_FUNC_NAME_BACK))
 
 #if defined(__GNUC__) || defined(_WIN32)
-    template <typename T>
-    inline static const char* Typename() 
-    {
-        static const size_t len = ECS_FUNC_TYPE_LEN(const char*, Typename, ECS_FUNC_NAME);
-        static char result[len + 1] = {};
-        return _::GetTypeName(result, ECS_FUNC_NAME, len);
-    }
+	template <typename T>
+	inline static const char* Typename()
+	{
+		static const size_t len = ECS_FUNC_TYPE_LEN(const char*, Typename, ECS_FUNC_NAME);
+		static char result[len + 1] = {};
+		return _::GetTypeName(result, ECS_FUNC_NAME, len);
+	}
 #else
 #error "Not supported"
 #endif
@@ -65,6 +65,7 @@ namespace Util
 		static constexpr bool value = std::is_base_of<_::PairBase, std::remove_cv_t<T>>::value;
 	};
 
+
 	template<typename T, typename U = int>
 	struct RealType;
 
@@ -89,6 +90,15 @@ namespace Util
 			std::is_same<T, RealType_t<T> >::value && !std::is_enum<T>::value;
 	};
 
+	template<typename T>
+	struct BaseType
+	{
+		using type = std::decay_t<std::remove_pointer_t< RealType_t<T> > >;
+	};
+
+	template <typename T>
+	using BaseTypeT = typename BaseType<T>::type;
+
 
 	inline size_t NextPowOf2(size_t n)
 	{
@@ -102,13 +112,13 @@ namespace Util
 		return n;
 	}
 
-    U64 HashFunc(const void* data, size_t length);
+	U64 HashFunc(const void* data, size_t length);
 
-    template<typename T>
-    T* GetTypeFromVectorData(std::vector<U8>& vec, size_t index)
-    {
-        return reinterpret_cast<T*>(vec.data() + sizeof(T) * index);
-    }
+	template<typename T>
+	T* GetTypeFromVectorData(std::vector<U8>& vec, size_t index)
+	{
+		return reinterpret_cast<T*>(vec.data() + sizeof(T) * index);
+	}
 
 #define PTR_OFFSET(o, offset) (void*)(((uintptr_t)(o)) + ((uintptr_t)(offset)))
 
@@ -133,7 +143,7 @@ namespace Util
 		I32 count = 0;
 	};
 
-	struct Stackpage 
+	struct Stackpage
 	{
 		void* data;
 		struct Stackpage* next;
@@ -144,7 +154,7 @@ namespace Util
 #define ECS_ALIGN(size, alignment) (size_t)((((((size_t)size) - 1) / ((size_t)alignment)) + 1) * ((size_t)alignment))
 #define ECS_OFFSET(o, offset) reinterpret_cast<void*>((reinterpret_cast<uintptr_t>(o)) + (static_cast<uintptr_t>(offset)))
 
-	struct Stack 
+	struct Stack
 	{
 		Stackpage first;
 		Stackpage* cur = nullptr;
@@ -157,15 +167,14 @@ namespace Util
 
 		void Uninit()
 		{
-			Stackpage* next, *cur = &first;
+			Stackpage* next, * cur = &first;
 			do {
 				next = cur->next;
 				if (cur == &first)
 					ECS_FREE(cur->data);
 				else
 					ECS_FREE(cur);
-			} 
-			while ((cur = next));
+			} while ((cur = next));
 		}
 
 		void Reset()
@@ -206,7 +215,7 @@ namespace Util
 
 #define STACK_PAGE_OFFSET ECS_ALIGN(sizeof(Stackpage), 16)
 
-		Stackpage* NewPage() 
+		Stackpage* NewPage()
 		{
 			Stackpage* newPage = (Stackpage*)ECS_MALLOC(STACK_PAGE_OFFSET + ECS_STACK_PAGE_SIZE);
 			newPage->data = ECS_OFFSET(newPage, STACK_PAGE_OFFSET);
@@ -215,16 +224,16 @@ namespace Util
 		}
 	};
 
-    class StorageVector
-    {
-    private:
+	class StorageVector
+	{
+	private:
 		size_t count = 0;
 		size_t capacity = 0;
 		size_t elemSize_ = 0;
-        void* data = nullptr;
+		void* data = nullptr;
 
-        static const size_t INITIAL_ELEM_COUNT = 2;
-    
+		static const size_t INITIAL_ELEM_COUNT = 2;
+
 		void ReserveData(size_t elemSize, size_t offset, size_t elemCount)
 		{
 			assert(elemSize != 0);
@@ -242,9 +251,9 @@ namespace Util
 			capacity = elemCount;
 			elemSize_ = elemSize;
 		}
-	
+
 	public:
-        StorageVector() = default;
+		StorageVector() = default;
 
 		~StorageVector()
 		{
@@ -255,10 +264,10 @@ namespace Util
 			}
 		}
 
-        void Clear()
-        {
-            count = 0;
-            capacity = 0;
+		void Clear()
+		{
+			count = 0;
+			capacity = 0;
 			if (data != nullptr)
 			{
 				free(data);
@@ -266,61 +275,61 @@ namespace Util
 			}
 		}
 
-        void* PushBack(size_t elemSize, size_t offset)
-        {
-            if (data == nullptr)
-            {
+		void* PushBack(size_t elemSize, size_t offset)
+		{
+			if (data == nullptr)
+			{
 				ReserveData(elemSize, offset, INITIAL_ELEM_COUNT);
-                count = 1;
+				count = 1;
 				elemSize_ = elemSize;
-                return PTR_OFFSET(data, offset);
-            }
+				return PTR_OFFSET(data, offset);
+			}
 
 			assert(elemSize_ == elemSize);
 
-            if (count >= capacity)
-            {
-                size_t newCapacity = capacity * 2;
-                if (!newCapacity)
-                    newCapacity = 2;
-                
+			if (count >= capacity)
+			{
+				size_t newCapacity = capacity * 2;
+				if (!newCapacity)
+					newCapacity = 2;
+
 				ReserveData(elemSize, offset, newCapacity);
-            }
+			}
 
-            count++;
-            return PTR_OFFSET(data, offset + (count - 1) * elemSize);
-        }
+			count++;
+			return PTR_OFFSET(data, offset + (count - 1) * elemSize);
+		}
 
 
-        void* PushBackN(size_t elemSize, size_t offset, size_t num)
-        {
-            if (num == 1)
-                return PushBack(elemSize, offset);
+		void* PushBackN(size_t elemSize, size_t offset, size_t num)
+		{
+			if (num == 1)
+				return PushBack(elemSize, offset);
 
 			assert(elemSize_ == elemSize);
 
-            size_t maxCount = capacity;
-            size_t oldCount = count;
-            size_t newCount = oldCount + num;
+			size_t maxCount = capacity;
+			size_t oldCount = count;
+			size_t newCount = oldCount + num;
 
-            if ((newCount - 1) >= maxCount)
-            {
-                if (maxCount == 0) 
-                {
-                    maxCount = num;
-                }
-                else 
-                {
-                    while (maxCount < newCount)
-                        maxCount *= 2;
-                }
+			if ((newCount - 1) >= maxCount)
+			{
+				if (maxCount == 0)
+				{
+					maxCount = num;
+				}
+				else
+				{
+					while (maxCount < newCount)
+						maxCount *= 2;
+				}
 
 				ReserveData(elemSize, offset, maxCount);
-            }
+			}
 
-            count = newCount;
-            return PTR_OFFSET(data, offset + oldCount * elemSize);
-        }
+			count = newCount;
+			return PTR_OFFSET(data, offset + oldCount * elemSize);
+		}
 
 		void* Get(size_t elemSize, size_t offset, size_t index)
 		{
@@ -350,7 +359,7 @@ namespace Util
 			assert(index >= 0 && index < count);
 			assert(elemSize_ == elemSize);
 			count--;
-			if (index != count) 
+			if (index != count)
 			{
 				void* lastElem = PTR_OFFSET(data, elemSize * count);
 				memcpy(data, lastElem, elemSize);
@@ -359,19 +368,19 @@ namespace Util
 
 		size_t Reserve(size_t elemSize, size_t offset, size_t elemCount)
 		{
-			if (!data) 
+			if (!data)
 			{
 				ReserveData(elemSize, offset, elemCount);
 				return elemCount;
 			}
-			else 
+			else
 			{
 				assert(elemSize_ == elemSize);
 				size_t result = capacity;
 				if (elemCount < count)
 					elemCount = count;
-				
-				if (result < elemCount) 
+
+				if (result < elemCount)
 				{
 					elemCount = NextPowOf2(elemCount);
 					ReserveData(elemSize, offset, elemCount);
@@ -406,11 +415,11 @@ namespace Util
 			return count == 0;
 		}
 
-        template<typename T>
-        T* PushBack()
-        {
-            return reinterpret_cast<T*>(PushBack(sizeof(T), alignof(T)));
-        }
+		template<typename T>
+		T* PushBack()
+		{
+			return reinterpret_cast<T*>(PushBack(sizeof(T), alignof(T)));
+		}
 
 		template<typename T>
 		T* Get(size_t index)
@@ -423,7 +432,7 @@ namespace Util
 		{
 			Remove(sizeof(T), alignof(T), index);
 		}
-    
+
 		template<typename T>
 		bool Popback(T* value)
 		{
@@ -593,7 +602,7 @@ namespace Util
 			size_t dense = chunk->sparse[offset];
 			if (dense > 0)
 			{
-				if (dense == count) 
+				if (dense == count)
 				{
 					count++;
 				}

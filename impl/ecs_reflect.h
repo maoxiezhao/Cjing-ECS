@@ -306,20 +306,20 @@ namespace _
 	}
 }
 
-template<typename C, typename U = int>
-struct ComponentType;
+	template<typename C, typename U = int>
+	struct ComponentType;
 
-template<typename C>
-struct ComponentType<C, enable_if_t<!Util::IsPair<C>::value, int>> : _::ComponentTypeRegister<C> {};
+	template<typename C>
+	struct ComponentType<C, enable_if_t<!Util::IsPair<C>::value, int>> : _::ComponentTypeRegister<Util::BaseTypeT<C>> {};
 
-template<typename C>
-struct ComponentType<C, enable_if_t<Util::IsPair<C>::value, int>>
-{
-	static EntityID ID(WorldImpl& world)
+	template<typename C>
+	struct ComponentType<C, enable_if_t<Util::IsPair<C>::value, int>>
 	{
-		EntityID relation = _::ComponentTypeRegister<C::First>::ID(world);
-		EntityID object = _::ComponentTypeRegister<C::Second>::ID(world);
-		return ECS_MAKE_PAIR(relation, object);
-	}
-};
+		static EntityID ID(WorldImpl& world)
+		{
+			EntityID relation = _::ComponentTypeRegister<C::First>::ID(world);
+			EntityID object = _::ComponentTypeRegister<C::Second>::ID(world);
+			return ECS_MAKE_PAIR(relation, object);
+		}
+	};
 }

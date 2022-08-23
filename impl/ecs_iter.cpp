@@ -189,7 +189,7 @@ namespace ECS
 			void* ptr = it->ptrs[t];
 			if (ptr == nullptr)
 				continue;
-			
+
 			it->ptrs[t] = (U8*)ptr + offset * it->sizes[t];
 		}
 	}
@@ -199,6 +199,7 @@ namespace ECS
 		ECS_ASSERT(it != nullptr);
 		ECS_ASSERT(it->chainIter != nullptr);
 
+		Iterator* chainIter = it->chainIter;
 		I32 numWorker = it->priv.iter.worker.count;
 		I32 workerIndex = it->priv.iter.worker.index;
 		I32 perWorker = 0, first = 0;
@@ -207,15 +208,15 @@ namespace ECS
 		do
 		{
 			// Do next of source chain iterator
-			if (!it->chainIter->next(it->chainIter))
+			if (!chainIter->next(chainIter))
 				return false;
 
-			memcpy(it, it->chainIter, offsetof(Iterator, priv));
+			memcpy(it, chainIter, offsetof(Iterator, priv));
 
 			I32 count = (I32)it->count;
 			perWorker = count / numWorker;
 			first = perWorker * workerIndex;
-			
+
 			// If there is still left, let the workers whose index is less than count execute one more entity
 			count -= perWorker * numWorker;
 			if (count > 0)
@@ -265,7 +266,7 @@ namespace ECS
 		iter.chainIter = &it;
 		iter.next = NextSplitWorkerIter;
 		iter.priv.iter.worker.index = index;
-		iter.priv.iter.worker.count = count;		
+		iter.priv.iter.worker.count = count;
 		return iter;
 	}
 }
