@@ -269,6 +269,12 @@ namespace ECS
 		}
 
 		template<typename C>
+		EntityID GetComponentID()
+		{
+			return ComponentType<C>::ID(*world);
+		}
+
+		template<typename C>
 		C* GetSingletonComponent()
 		{
 			EntityID compID = ComponentType<C>::ID(*world);
