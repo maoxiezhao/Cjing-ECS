@@ -396,11 +396,11 @@ namespace ECS
 		}
 
 		bool operator ==(const IDView& rhs)const {
-			return world == rhs.world && entityID == rhs.entityID;
+			return entityID == rhs.entityID;
 		}
 
 		bool operator !=(const IDView& rhs)const {
-			return world != rhs.world || entityID != rhs.entityID;
+			return entityID != rhs.entityID;
 		}
 
 		operator ECS::EntityID() const {
