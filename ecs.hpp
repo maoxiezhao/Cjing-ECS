@@ -721,7 +721,7 @@ namespace ECS
 		}
 	};
 
-#define INVALID_ENTITY ECS::Entity::Null()
+	const static ECS::Entity INVALID_ENTITY = ECS::Entity::Null();
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Query
