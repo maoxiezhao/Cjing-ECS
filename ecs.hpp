@@ -582,7 +582,6 @@ namespace ECS
 		void SetName(const char* name)
 		{
 			SetEntityName(world, entityID, name);
-			return ToBase();
 		}
 
 		const char* GetName()
