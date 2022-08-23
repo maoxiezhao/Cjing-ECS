@@ -1,3 +1,5 @@
+#ifdef TEST_ECS
+
 #include "atomic.h"
 
 #include <Windows.h>
@@ -139,3 +141,5 @@ namespace VulkanTest
 		return _InterlockedCompareExchange64(pw, 0, 0);
 	}
 }
+
+#endif

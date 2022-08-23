@@ -1,3 +1,5 @@
+#ifdef TEST_ECS
+
 #pragma once
 
 #include "common.h"
@@ -34,3 +36,5 @@ namespace Jobsystem
     void Wait(JobHandle* handle);
 }
 }
+
+#endif

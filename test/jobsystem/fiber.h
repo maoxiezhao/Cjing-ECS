@@ -1,3 +1,5 @@
+#ifdef TEST_ECS
+
 #pragma once
 
 #include "common.h"
@@ -23,3 +25,5 @@ namespace Fiber
     bool IsValid(Handle fiber);
 }
 }
+
+#endif

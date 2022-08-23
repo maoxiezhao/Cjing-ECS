@@ -1,3 +1,5 @@
+#ifdef TEST_ECS
+
 #pragma once
 
 #include "common.h"
@@ -28,3 +30,5 @@ namespace VulkanTest
 	I64 AtomicExchangeIfGreater(volatile I64* pw, volatile I64 val);
 	I64 AtomicRead(volatile I64* pw);
 }
+
+#endif

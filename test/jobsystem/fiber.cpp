@@ -1,3 +1,5 @@
+#ifdef TEST_ECS
+
 #include "fiber.h"
 
 #include <Windows.h>
@@ -35,3 +37,5 @@ bool IsValid(Handle fiber)
 }
 }
 }
+
+#endif

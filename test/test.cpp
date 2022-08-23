@@ -1,4 +1,6 @@
-﻿#include "ecs.hpp"
+﻿#ifdef TEST_ECS
+
+#include "ecs.hpp"
 #include "test/jobsystem/jobsystem.h"
 #include "test/jobsystem/atomic.h"
 
@@ -377,3 +379,5 @@ TEST_CASE("Pipeline+JobSystem", "ECS")
     CHECK(b == 12500);
     CHECK(c == 25000);
 }
+
+#endif

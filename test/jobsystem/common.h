@@ -1,3 +1,5 @@
+#ifdef TEST_ECS
+
 #pragma once
 
 #include <vector>
@@ -256,3 +258,5 @@ public:
 	T* pEnd = nullptr;
 };
 }
+
+#endif

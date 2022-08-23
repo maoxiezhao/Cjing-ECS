@@ -1,3 +1,5 @@
+#ifdef TEST_ECS
+
 #include "jobsystem.h"
 #include "fiber.h"
 #include "sync.h"
@@ -436,3 +438,5 @@ namespace Jobsystem
 }
 
 #pragma warning (pop)
+
+#endif

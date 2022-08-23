@@ -1,3 +1,4 @@
+#ifdef TEST_ECS
 
 #include "sync.h"
 #include "atomic.h"
@@ -264,3 +265,5 @@ namespace VulkanTest
 		::ReleaseSRWLockExclusive(&Get()->lock);
 	}
 }
+
+#endif

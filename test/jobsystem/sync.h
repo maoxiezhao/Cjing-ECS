@@ -1,3 +1,5 @@
+#ifdef TEST_ECS
+
 #pragma once
 
 #include "common.h"
@@ -189,3 +191,5 @@ namespace VulkanTest
 	};
 
 }
+
+#endif
