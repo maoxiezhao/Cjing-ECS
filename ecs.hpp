@@ -699,13 +699,13 @@ namespace ECS
 		}
 
 		template<typename C>
-		bool Has()
+		bool Has()const
 		{
 			EntityID compID = ComponentType<C>::ID(*world);
 			return HasComponent(world, entityID, compID);
 		}
 
-		bool Has(EntityID compID)
+		bool Has(EntityID compID)const
 		{
 			return HasComponent(world, entityID, compID);
 		}
