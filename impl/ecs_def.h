@@ -307,7 +307,8 @@ namespace ECS
 		void** ptrs = nullptr;
 		EntityTable* table = nullptr;
 		I32 offset = 0;
-		
+		void* ctx = nullptr;
+
 		// Variable
 		I32 variableCount = 0;
 		QueryVariable variables[ECS_TERM_CACHE_SIZE];
@@ -322,17 +323,17 @@ namespace ECS
 		// Event
 		EntityID event;
 
-		// Chained iters
-		Iterator* chainIter = nullptr;
-		IterNextAction next = nullptr;
-		
+		// Context
+		U32 flags = 0;
+
 		// Impl datas
 		IteratorPrivate priv;
 
-		// Context
-		U32 flags = 0;
+		// Chained iters
+		Iterator* chainIter = nullptr;
+		IterNextAction next = nullptr;
+
 		void* invoker = nullptr;
-		void* ctx = nullptr;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
