@@ -532,6 +532,30 @@ namespace ECS
 			AddComponent(world, entity, EcsTagDisabled);
 	}
 
+	void ClearEntity(WorldImpl* world, EntityID entity)
+	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(IsEntityValid(world, entity));
+
+		Stage* stage = GetStageFromWorld(&world);
+		if (DeferClear(world, stage, entity))
+			return;
+
+		EntityInfo* entityInfo = world->entityPool.Get(entity);
+		if (entityInfo == nullptr)
+			return;
+
+		EntityTable* table = entityInfo->table;
+		if (table)
+		{
+			table->DeleteEntity(entityInfo->row, true);
+			entityInfo->table = nullptr;
+			entityInfo->row = 0;
+		}
+
+		EndDefer(world);
+	}
+
 	void EnsureEntity(WorldImpl* world, EntityID entity)
 	{
 		world = GetWorld(world);

@@ -31,6 +31,7 @@ namespace ECS
 	const char* GetEntityName(WorldImpl* world, EntityID entity);
 	EntityID GetParent(WorldImpl* world, EntityID entity);
 	void EnableEntity(WorldImpl* world, EntityID entity, bool enabled);
+	void ClearEntity(WorldImpl* world, EntityID entity);
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Coomponent

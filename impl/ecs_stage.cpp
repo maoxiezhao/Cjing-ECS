@@ -184,6 +184,8 @@ namespace ECS
 					DeleteEntity(world, entity);
 					break;
 				case ECS::EcsOpClear:
+					ClearEntity(world, entity);
+					break;
 				case ECS::EcsOpOnDeleteAction:
 					ECS_ASSERT(false);
 					break;
@@ -394,6 +396,17 @@ namespace ECS
 		op->entity = entity;
 		op->kind = EcsOpModified;
 		op->id = id;
+		return true;
+	}
+
+	bool DeferClear(WorldImpl* world, Stage* stage, EntityID entity)
+	{
+		if (!DoDeferOperation(world, stage))
+			return false;
+
+		auto op = NewDeferOperator(stage);
+		op->entity = entity;
+		op->kind = EcsOpClear;
 		return true;
 	}
 }

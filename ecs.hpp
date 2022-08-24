@@ -357,7 +357,7 @@ namespace ECS
 			ECS::SetThreads(world, threads, startThreads);
 		}
 
-		void RunPipeline(EntityID pipeline) 
+		void RunPipeline(EntityID pipeline)
 		{
 			ECS::RunPipeline(world, pipeline);
 		}
@@ -377,14 +377,14 @@ namespace ECS
 			entityID(INVALID_ENTITYID)
 		{}
 
-		explicit IDView(EntityID id) : 
+		explicit IDView(EntityID id) :
 			world(nullptr),
-			entityID(id) 
+			entityID(id)
 		{}
 
 		explicit IDView(WorldImpl* world, EntityID id = 0) :
 			world(world),
-			entityID(id) 
+			entityID(id)
 		{}
 
 		bool IsPair()const {
@@ -417,7 +417,7 @@ namespace ECS
 	/// </summary>
 	struct EntityView : public IDView
 	{
-		EntityView() : IDView()  { }
+		EntityView() : IDView() { }
 
 		bool IsValid()const {
 			return world && entityID != INVALID_ENTITYID && EntityExists(world, entityID);
@@ -523,7 +523,7 @@ namespace ECS
 			return ToBase();
 		}
 
-		template <typename T, Util::if_t<!std::is_function_v<T> && Util::is_actual<T>::value> = 0>
+		template <typename T, Util::if_t<!std::is_function_v<T>&& Util::is_actual<T>::value> = 0>
 		Self& Set(const T& value)
 		{
 			EntityID compID = ComponentType<T>::ID(*world);
@@ -549,13 +549,13 @@ namespace ECS
 		}
 
 		template <typename T>
-		Self& Remove() 
+		Self& Remove()
 		{
 			RemoveComponent(world, entityID, ComponentType<T>::ID(*world));
 			return ToBase();
 		}
 
-		Self& Remove(EntityID compID) 
+		Self& Remove(EntityID compID)
 		{
 			RemoveComponent(world, entityID, compID);
 			return ToBase();
@@ -568,7 +568,7 @@ namespace ECS
 		}
 
 		template<typename First, typename Second>
-		Self& Remove() 
+		Self& Remove()
 		{
 			return this->Remove<First>(ComponentType<Second>::ID(*world));
 		}
@@ -705,9 +705,14 @@ namespace ECS
 			return HasComponent(world, entityID, compID);
 		}
 
+		bool Has(EntityID compID)
+		{
+			return HasComponent(world, entityID, compID);
+		}
+
 		void Clear()
 		{
-			
+			ClearEntity(world, entityID);
 		}
 
 		void Destroy()
@@ -773,7 +778,7 @@ namespace ECS
 			return *this;
 		}
 
-		Base& First() 
+		Base& First()
 		{
 			ECS_ASSERT(term != nullptr);
 			current = &term->first;
@@ -883,12 +888,12 @@ namespace ECS
 	protected:
 		virtual ECS::WorldImpl* GetWorld() = 0;
 
-		void SetTerm(Term* term_) 
+		void SetTerm(Term* term_)
 		{
 			term = term_;
 			if (term)
 				current = &term->src;
-			else 
+			else
 				current = nullptr;
 		}
 
@@ -915,7 +920,7 @@ namespace ECS
 			ECS_ASSERT(termIndex < MAX_QUERY_ITEM_COUNT);
 			this->SetTerm(&queryDesc.filter.terms[termIndex]);
 			termIndex++;
-			return* this;
+			return*this;
 		}
 
 		Base& Term(EntityID id)
@@ -987,7 +992,7 @@ namespace ECS
 	template<typename... Comps>
 	struct QueryBuilder : public QueryBuilderBase<QueryBuilder<Comps...>, Comps...>
 	{
-		QueryBuilder(WorldImpl* world_) : QueryBuilderBase<QueryBuilder<Comps...>, Comps...>(world_) 
+		QueryBuilder(WorldImpl* world_) : QueryBuilderBase<QueryBuilder<Comps...>, Comps...>(world_)
 		{
 			TermSig<Comps...>(world_).Populate(this);
 		}
@@ -1075,7 +1080,7 @@ namespace ECS
 			world(world_)
 		{
 			TermSig<Comps...>(world_).Populate(this);
-		
+
 			EntityCreateDesc entityDesc = {};
 			sysDesc.entity = CreateEntityID(world_, entityDesc);
 		}

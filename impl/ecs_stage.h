@@ -28,4 +28,5 @@ namespace ECS
 	bool DeferDelete(WorldImpl* world, Stage* stage, EntityID entity);
 	bool DeferSet(WorldImpl* world, Stage* stage, EntityID entity, DeferOperationKind kind, EntityID compID, size_t size, const void* value, void** valueOut);
 	bool DeferModified(WorldImpl* world, Stage* stage, EntityID entity, EntityID id);
+	bool DeferClear(WorldImpl* world, Stage* stage, EntityID entity);
 }

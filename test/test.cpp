@@ -53,6 +53,30 @@ struct TestComponent
     }
 };
 
+TEST_CASE("Basic", "ECS")
+{
+    ECS::World world;
+    ECS::Entity a = world.Entity("A")
+        .Add<VelocityComponent>()
+        .Add<PositionComponent>();
+    VelocityComponent* comp = a.GetMut<VelocityComponent>();
+    comp->x = 1.0f;
+    const VelocityComponent* compConst = a.Get<VelocityComponent>();
+    CHECK(compConst->x == 1.0f);
+
+    a.Clear();
+    const VelocityComponent* compConst1 = a.Get<VelocityComponent>();
+    const PositionComponent* posConst1 = a.Get<PositionComponent>();
+    CHECK(compConst1 == nullptr);
+    CHECK(posConst1 == nullptr);
+
+    a.Add<VelocityComponent>();
+    comp = a.GetMut<VelocityComponent>();
+    comp->x = 1.0f;
+    const VelocityComponent* compConst2 = a.Get<VelocityComponent>();
+    CHECK(compConst->x == 1.0f);
+}
+
 TEST_CASE("Reflect", "ECS")
 {
     ECS::ComponentTypeHooks info = {};
@@ -113,8 +137,6 @@ TEST_CASE("System", "ECS")
     );
     system1.Run();
     CHECK(updateTimes == 1000);
-
-
 }
 
 TEST_CASE("SingletonComponent", "ECS")
