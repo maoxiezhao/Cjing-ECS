@@ -698,6 +698,13 @@ namespace ECS
 			return Entity(world, parent);
 		}
 
+		void RemoveParent()
+		{
+			EntityID parent = ECS::GetParent(world, entityID);
+			if (parent != ECS::INVALID_ENTITYID)
+				RemoveComponent(world, entityID, ECS_MAKE_PAIR(EcsRelationChildOf, parent));
+		}
+
 		template<typename C>
 		bool Has()const
 		{

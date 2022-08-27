@@ -198,10 +198,10 @@ namespace ECS
 		// Remove node from list of Edges
 		Util::ListNode<TableGraphEdge>* prev = edge->prev;
 		Util::ListNode<TableGraphEdge>* next = edge->next;
-		if (prev)
-			prev->next = next;
 		if (next)
 			next->prev = prev;
+		if (prev)
+			prev->next = next;
 
 		// Free table diff
 		EntityTableDiff* diff = edge->diff;
@@ -689,6 +689,9 @@ namespace ECS
 
 	void InitAddTableGraphEdge(WorldImpl* world, TableGraphEdge* edge, EntityID compID, EntityTable* from, EntityTable* to)
 	{
+		ECS_ASSERT(edge->prev == nullptr);
+		ECS_ASSERT(edge->next == nullptr);
+
 		edge->from = from;
 		edge->to = to;
 		edge->compID = compID;
@@ -714,6 +717,9 @@ namespace ECS
 
 	void InitRemoveTableGraphEdge(WorldImpl* world, TableGraphEdge* edge, EntityID compID, EntityTable* from, EntityTable* to)
 	{
+		ECS_ASSERT(edge->prev == nullptr);
+		ECS_ASSERT(edge->next == nullptr);
+
 		edge->from = from;
 		edge->to = to;
 		edge->compID = compID;
@@ -724,8 +730,9 @@ namespace ECS
 		{
 			// Remove edges are appended to incomingEdges->prev
 			Util::ListNode<TableGraphEdge>* toNode = &to->graphNode.incomingEdges;
-			Util::ListNode<TableGraphEdge>* prev = toNode->next;
+			Util::ListNode<TableGraphEdge>* prev = toNode->prev;
 			toNode->prev = edge;
+
 			edge->next = toNode;
 			edge->prev = prev;
 

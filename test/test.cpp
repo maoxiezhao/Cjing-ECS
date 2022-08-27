@@ -318,6 +318,12 @@ TEST_CASE("ChildOf", "ECS")
 
     const char* name = e1.GetName();
     CHECK(std::string(name) == "e1");
+
+    auto t1 = e2.GetParent();
+    CHECK(t1 == e1);
+    e2.RemoveParent();
+    auto t2 = e2.GetParent();
+    CHECK(t2 == ECS::INVALID_ENTITY);
 }
 
 struct Rendering {};
