@@ -17,9 +17,9 @@ namespace ECS
 		return (e1 > e2) - (e1 < e2);
 	}
 
-	inline void DefaultCtor(WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	inline void DefaultCtor(void* ptr, size_t count, const ComponentTypeInfo* info)
 	{
-		memset(ptr, 0, size * count);
+		memset(ptr, 0, info->size * count);
 	}
 
 	EntityID InitPipeline(WorldImpl* world, const PipelineCreateDesc& desc)
@@ -420,7 +420,7 @@ namespace ECS
 		// Set system component action
 		ComponentTypeHooks info = {};
 		info.ctor = DefaultCtor;
-		info.dtor = [](WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr) {
+		info.dtor = [](void* ptr, size_t count, const ComponentTypeInfo* info) {
 			PipelineComponent* pipelines = static_cast<PipelineComponent*>(ptr);
 			for (size_t i = 0; i < count; i++)
 			{

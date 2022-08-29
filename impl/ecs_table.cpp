@@ -73,7 +73,7 @@ namespace ECS
 		if (typeInfo != nullptr && typeInfo->hooks.ctor != nullptr)
 		{
 			void* mem = columnData->Get(typeInfo->size, typeInfo->alignment, row);
-			typeInfo->hooks.ctor(world, entities, typeInfo->size, count, mem);
+			typeInfo->hooks.ctor(mem, count, typeInfo);
 		}
 	}
 
@@ -84,7 +84,7 @@ namespace ECS
 		if (typeInfo != nullptr && typeInfo->hooks.dtor != nullptr)
 		{
 			void* mem = columnData->Get(typeInfo->size, typeInfo->alignment, row);
-			typeInfo->hooks.dtor(world, entities, typeInfo->size, count, mem);
+			typeInfo->hooks.dtor(mem, count, typeInfo);
 		}
 	}
 
@@ -870,8 +870,8 @@ namespace ECS
 					auto dtor = typeInfo.hooks.dtor;
 					if (moveCtor != nullptr && dtor != nullptr)
 					{
-						moveCtor(world, &srcEntity, &srcEntity, typeInfo.size, 1, srcMem, dstMem);
-						dtor(world, &srcEntity, typeInfo.size, 1, srcMem);
+						moveCtor(srcMem, dstMem, 1, &typeInfo);
+						dtor(srcMem, 1, &typeInfo);
 					}
 					else
 					{
@@ -882,7 +882,7 @@ namespace ECS
 				{
 					// Do copy-ctor
 					if (typeInfo.hooks.copyCtor != nullptr)
-						typeInfo.hooks.copyCtor(world, &srcEntity, &dstEntity, typeInfo.size, 1, srcMem, dstMem);
+						typeInfo.hooks.copyCtor(srcMem, dstMem, 1, &typeInfo);
 					else
 						memcpy(dstMem, srcMem, typeInfo.size);
 				}
@@ -1308,15 +1308,10 @@ namespace ECS
 					if (onRemove != nullptr)
 						OnComponentCallback(world, this, &typeInfo, onRemove, &columnData, &entityToDelete, storageIDs[i], index, 1);
 
-					if (typeInfo.hooks.move != nullptr && typeInfo.hooks.dtor != nullptr)
-					{
-						typeInfo.hooks.move(world, &entityToMove, &entityToDelete, typeInfo.size, 1, srcMem, dstMem);
-						typeInfo.hooks.dtor(world, &entityToDelete, typeInfo.size, 1, srcMem);
-					}
+					if (typeInfo.hooks.moveDtor != nullptr)
+						typeInfo.hooks.moveDtor(srcMem, dstMem, 1, &typeInfo);
 					else
-					{
 						memcpy(dstMem, srcMem, typeInfo.size);
-					}
 
 					columnData.RemoveLast();
 				}
@@ -1359,7 +1354,7 @@ namespace ECS
 		// Push new column datas and do placement new if we have ctor
 		void* mem = columnData.PushBackN(compTypeInfo->size, compTypeInfo->alignment, addCount);
 		if (construct && compTypeInfo && compTypeInfo->hooks.ctor != nullptr)
-			compTypeInfo->hooks.ctor(world, &entities[oldCount], compTypeInfo->size, addCount, mem);
+			compTypeInfo->hooks.ctor(mem, addCount, compTypeInfo);
 	}
 
 	U32 EntityTable::AppendNewEntity(EntityID entity, EntityInfo* info, bool construct)

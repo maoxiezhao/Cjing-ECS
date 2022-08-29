@@ -77,34 +77,6 @@ TEST_CASE("Basic", "ECS")
     CHECK(compConst->x == 1.0f);
 }
 
-TEST_CASE("Reflect", "ECS")
-{
-    ECS::ComponentTypeHooks info = {};
-    info.ctor = ECS::Reflect::Ctor<TestComponent>();
-    info.dtor = ECS::Reflect::Dtor<TestComponent>();
-    info.copy = ECS::Reflect::Copy<TestComponent>();
-    info.move = ECS::Reflect::Move<TestComponent>();
-    info.copyCtor = ECS::Reflect::CopyCtor<TestComponent>();
-    info.moveCtor = ECS::Reflect::MoveCtor<TestComponent>();
-
-    TestComponent a[2];
-    a[0].vec.push_back(1);
-    a[0].vec.push_back(2);
-    a[0].vec.push_back(3);
-    
-    TestComponent* b = static_cast<TestComponent*>(malloc(sizeof(TestComponent) * 2));
-    info.moveCtor(nullptr, nullptr, nullptr, sizeof(TestComponent), 2, a, b);
-    CHECK(b[0].vec.size() == 3);
-    CHECK(a[0].vec.size() == 0);
-
-    info.copy(nullptr, nullptr, nullptr, sizeof(TestComponent), 2, b, a);
-    CHECK(b[0].vec.size() == 3);
-    CHECK(a[0].vec.size() == 3);
-
-    info.dtor(nullptr, nullptr, sizeof(TestComponent), 2, b);
-    CHECK(clearTimes == 2);
-}
-
 TEST_CASE("System", "ECS")
 {
     I32 updateTimes = 0;

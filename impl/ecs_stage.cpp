@@ -376,7 +376,7 @@ namespace ECS
 		if (value)
 		{
 			if (typeInfo->hooks.copyCtor != nullptr)
-				typeInfo->hooks.copyCtor(world, nullptr, nullptr, size, 1, value, op->value);
+				typeInfo->hooks.copyCtor(value, op->value, 1, typeInfo);
 			else
 				memcpy(op->value, value, size);
 		}

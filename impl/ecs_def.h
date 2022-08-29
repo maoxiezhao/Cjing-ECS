@@ -467,11 +467,13 @@ namespace ECS
 	//// Components
 	////////////////////////////////////////////////////////////////////////////////
 
-	using CompXtorFunc = void(*)(WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr);
-	using CompCopyFunc = void(*)(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr);
-	using CompMoveFunc = void(*)(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr);
-	using CompCopyCtorFunc = void(*)(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr);
-	using CompMoveCtorFunc = void(*)(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr);
+	struct ComponentTypeInfo;
+
+	using CompXtorFunc = void(*)(void* ptr, size_t count, const ComponentTypeInfo* info);
+	using CompCopyFunc = void(*)(const void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo* info);
+	using CompMoveFunc = void(*)(void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo* info);
+	using CompCopyCtorFunc = void(*)(const void* srcPtr, void* dstPtr, size_t count,  const ComponentTypeInfo* info);
+	using CompMoveCtorFunc = void(*)(void* srcPtr, void* dstPtr, size_t count,  const ComponentTypeInfo* info);
 
 	struct ComponentTypeHooks
 	{
@@ -481,6 +483,7 @@ namespace ECS
 		CompMoveFunc move;
 		CompCopyCtorFunc copyCtor;
 		CompMoveCtorFunc moveCtor;
+		CompMoveFunc moveDtor;
 
 		IterCallbackAction onAdd;
 		IterCallbackAction onRemove;

@@ -17,14 +17,14 @@ namespace Reflect
 	/// Constructor
 	////////////////////////////////////////////////////////////////////////
 	template <typename T>
-	void DefaultCtor(WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	void DefaultCtor(void* ptr, size_t count, const ComponentTypeInfo*)
 	{
 		T* objArr = static_cast<T*>(ptr);
 		for (size_t i = 0; i < count; i++)
 			new (&objArr[i]) T();
 	}
 
-	inline void IllegalCtor(WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	inline void IllegalCtor(void* ptr, size_t count, const ComponentTypeInfo*)
 	{
 		ECS_ASSERT(0);
 	}
@@ -52,7 +52,7 @@ namespace Reflect
 	/// Destructor
 	////////////////////////////////////////////////////////////////////////
 	template <typename T>
-	void DefaultDtor(WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	void DefaultDtor(void* ptr, size_t count, const ComponentTypeInfo*)
 	{
 		T* objArr = static_cast<T*>(ptr);
 		for (size_t i = 0; i < count; i++)
@@ -75,7 +75,7 @@ namespace Reflect
 	/// Copy
 	////////////////////////////////////////////////////////////////////////
 	template <typename T>
-	void DefaultCopy(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr)
+	void DefaultCopy(const void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo*)
 	{
 		const T* srcArr = static_cast<const T*>(srcPtr);
 		T* dstArr = static_cast<T*>(dstPtr);
@@ -83,7 +83,7 @@ namespace Reflect
 			dstArr[i] = srcArr[i];
 	}
 
-	inline void IllegalCopy(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr)
+	inline void IllegalCopy(const void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo*)
 	{
 		ECS_ASSERT(0);
 	}
@@ -111,7 +111,7 @@ namespace Reflect
 	/// Copy ctor
 	////////////////////////////////////////////////////////////////////////
 	template <typename T>
-	void DefaultCopyCtor(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, const void* srcPtr, void* dstPtr)
+	void DefaultCopyCtor(const void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo*)
 	{
 		const T* srcArr = static_cast<const T*>(srcPtr);
 		T* dstArr = static_cast<T*>(dstPtr);
@@ -142,7 +142,7 @@ namespace Reflect
 	/// Move
 	////////////////////////////////////////////////////////////////////////
 	template <typename T>
-	void DefaultMove(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr)
+	void DefaultMove(void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo*)
 	{
 		T* srcArr = static_cast<T*>(srcPtr);
 		T* dstArr = static_cast<T*>(dstPtr);
@@ -150,7 +150,7 @@ namespace Reflect
 			dstArr[i] = ECS_MOV(srcArr[i]);
 	}
 
-	inline void IllegalMove(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr)
+	inline void IllegalMove(void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo*)
 	{
 		ECS_ASSERT(0);
 	}
@@ -178,7 +178,7 @@ namespace Reflect
 	/// Move ctor
 	////////////////////////////////////////////////////////////////////////
 	template <typename T>
-	void DefaultMoveCtor(WorldImpl* world, EntityID* srcEntities, EntityID* dstEntities, size_t size, size_t count, void* srcPtr, void* dstPtr)
+	void DefaultMoveCtor(void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo*)
 	{
 		T* srcArr = static_cast<T*>(srcPtr);
 		T* dstArr = static_cast<T*>(dstPtr);

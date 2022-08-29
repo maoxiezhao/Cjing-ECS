@@ -7,9 +7,9 @@
 
 namespace ECS
 {
-	inline void DefaultCtor(WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	inline void DefaultCtor(void* ptr, size_t count, const ComponentTypeInfo* info)
 	{
-		memset(ptr, 0, size * count);
+		memset(ptr, 0, info->size * count);
 	}
 
 	EntityID InitNewSystem(WorldImpl* world, const SystemCreateDesc& desc)
@@ -104,7 +104,7 @@ namespace ECS
 		// Set system component action
 		ComponentTypeHooks info = {};
 		info.ctor = DefaultCtor;
-		info.dtor = [](WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr) {
+		info.dtor = [](void* ptr, size_t count, const ComponentTypeInfo* info) {
 			SystemComponent* sysArr = static_cast<SystemComponent*>(ptr);
 			for (size_t i = 0; i < count; i++)
 			{

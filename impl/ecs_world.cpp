@@ -28,9 +28,44 @@ namespace ECS
 		return id & (~ECS_GENERATION_MASK);
 	}
 
-	inline void DefaultCtor(WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	inline void DefaultCtor(void* ptr, size_t count, const ComponentTypeInfo* info)
 	{
-		memset(ptr, 0, size * count);
+		memset(ptr, 0, info->size * count);
+	}
+
+	inline void DefaultCopyCtor(const void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo* info)
+	{
+		auto* hooks = &info->hooks;
+		hooks->ctor(dstPtr, count, info);
+		hooks->copy(srcPtr, dstPtr, count, info);
+	}
+
+	inline void DefaultMoveCtor(void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo* info)
+	{
+		auto* hooks = &info->hooks;
+		hooks->ctor(dstPtr, count, info);
+		hooks->move(srcPtr, dstPtr, count, info);
+	}
+
+	inline void DefaultMove(void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo* info)
+	{
+		auto* hooks = &info->hooks;
+		hooks->move(srcPtr, dstPtr, count, info);
+	}
+
+	inline void DefaultMoveDtor(void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo* info)
+	{
+		auto* hooks = &info->hooks;
+		hooks->move(srcPtr, dstPtr, count, info);
+		hooks->dtor(srcPtr, count, info);
+	}
+
+
+	inline void DefaultNoMoveDtor(void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo* info)
+	{
+		auto* hooks = &info->hooks;
+		hooks->dtor(dstPtr, count, info);
+		memcpy(dstPtr, srcPtr, info->size * count);
 	}
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -65,7 +100,7 @@ namespace ECS
 
 #define BuiltinCompDtor(type) type##_dtor
 
-	static void BuiltinCompDtor(TriggerComponent)(WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	static void BuiltinCompDtor(TriggerComponent)(void* ptr, size_t count, const ComponentTypeInfo* info)
 	{
 		TriggerComponent* comps = static_cast<TriggerComponent*>(ptr);
 		for (int i = 0; i < count; i++)
@@ -75,7 +110,7 @@ namespace ECS
 		}
 	}
 
-	static void BuiltinCompDtor(ObserverComponent)(WorldImpl* world, EntityID* entities, size_t size, size_t count, void* ptr)
+	static void BuiltinCompDtor(ObserverComponent)(void* ptr, size_t count, const ComponentTypeInfo* info)
 	{
 		ObserverComponent* comps = static_cast<ObserverComponent*>(ptr);
 		for (int i = 0; i < count; i++)
@@ -914,14 +949,14 @@ namespace ECS
 				if (isMove)
 				{
 					if (compTypeInfo->hooks.move != nullptr)
-						compTypeInfo->hooks.move(world, &entity, &entity, compTypeInfo->size, 1, (void*)ptr, dst);
+						compTypeInfo->hooks.move((void*)ptr, dst, 1, compTypeInfo);
 					else
 						memcpy(dst, ptr, size);
 				}
 				else
 				{
 					if (compTypeInfo->hooks.copy != nullptr)
-						compTypeInfo->hooks.copy(world, &entity, &entity, compTypeInfo->size, 1, ptr, dst);
+						compTypeInfo->hooks.copy(ptr, dst, 1, compTypeInfo);
 					else
 						memcpy(dst, ptr, size);
 				}
@@ -963,7 +998,11 @@ namespace ECS
 	void SetComponentTypeInfo(WorldImpl* world, EntityID compID, const ComponentTypeHooks& info)
 	{
 		world = GetWorld(world);
+
 		ComponentTypeInfo* compTypeInfo = world->compTypePool.Ensure(compID);
+		ECS_ASSERT(compTypeInfo != nullptr);
+		ECS_ASSERT(compTypeInfo->compID == ECS::INVALID_ENTITYID || compTypeInfo->compID == compID);
+
 		size_t size = compTypeInfo->size;
 		size_t alignment = compTypeInfo->alignment;
 		if (size == 0)
@@ -975,15 +1014,43 @@ namespace ECS
 				alignment = infoComponent->algnment;
 			}
 		}
-
+		
+		// Set base info
 		compTypeInfo->compID = compID;
 		compTypeInfo->size = size;
 		compTypeInfo->alignment = alignment;
-		compTypeInfo->hooks = info;
+
+		// Set type hooks
+		compTypeInfo->hooks = info;	
 
 		// Set default constructor
 		if (!info.ctor && (info.dtor || info.copy || info.move))
 			compTypeInfo->hooks.ctor = DefaultCtor;
+
+		// Set default copy constructor
+		if (info.copy && !info.copyCtor)
+			compTypeInfo->hooks.copyCtor = DefaultCopyCtor;
+
+		// Set default move constructor
+		if (info.move && !info.moveCtor)
+			compTypeInfo->hooks.moveCtor = DefaultMoveCtor;
+
+		// Set default move destructor
+		if (!info.moveDtor)
+		{
+			if (info.move)
+			{
+				if (info.dtor)
+					compTypeInfo->hooks.moveDtor = DefaultMoveDtor;
+				else
+					compTypeInfo->hooks.moveDtor = DefaultMove;
+
+			}
+			else if (info.dtor)
+			{
+				compTypeInfo->hooks.moveDtor = DefaultNoMoveDtor;
+			}
+		}
 	}
 
 	bool HasComponentTypeInfo(WorldImpl* world, EntityID compID)
