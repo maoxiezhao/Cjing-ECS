@@ -362,6 +362,18 @@ namespace ECS
 			ECS::RunPipeline(world, pipeline);
 		}
 
+		template<typename T>
+		I32 Count()const
+		{
+			EntityID compID = ComponentType<T>::ID(*world);
+			return Count(compID);
+		}
+
+		I32 Count(EntityID compID)const 
+		{
+			return CountComponent(world, compID);
+		}
+
 	private:
 		WorldImpl* world;
 	};

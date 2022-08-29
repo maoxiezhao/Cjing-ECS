@@ -879,6 +879,23 @@ namespace ECS
 		EndDefer(world);
 	}
 
+	I32 CountComponent(WorldImpl* world, EntityID compID)
+	{
+		ECS_ASSERT(world != nullptr);
+		if (compID == ECS::INVALID_ENTITYID)
+			return 0;
+
+		I32 count = 0;
+		Term term = { compID };
+		auto it = GetTermIterator(world, term);
+		it.flags |= IteratorFlagIsFilter;
+
+		while (NextTermIter(&it)) {
+			count += (I32)it.count;
+		}
+		return count;
+	}
+
 	void SetComponent(WorldImpl* world, EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove)
 	{
 		auto stage = GetStageFromWorld(&world);

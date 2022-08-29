@@ -191,14 +191,14 @@ TEST_CASE("Query", "ECS")
     auto query = world.CreateQuery<PositionComponent, VelocityComponent>().Build();
     auto query1 = world.CreateQuery<PositionComponent>().Build();
     auto query2 = world.CreateQuery<PositionComponent, TestComponent>().Build();
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 35; i++)
     {
         world.Entity((std::string("A") + std::to_string(i)).c_str())
             .Add<PositionComponent>()
             .Add<VelocityComponent>();
     }
 
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 75; i++)
     {
         world.Entity((std::string("C") + std::to_string(i)).c_str())
             .Add<PositionComponent>()
@@ -219,13 +219,16 @@ TEST_CASE("Query", "ECS")
     query1.ForEach([&](ECS::EntityID entity, PositionComponent& pos) {
         cTimes++;
     });
-    CHECK(cTimes == 10);
+    CHECK(cTimes == 110);
 
     U32 dTimes = 0;
     query2.ForEach([&](ECS::EntityID entity, PositionComponent& pos, TestComponent& test) {
         dTimes++;
     });
-    CHECK(dTimes == 5);
+    CHECK(dTimes == 75);
+
+    I32 count = world.Count<PositionComponent>();
+    CHECK(count == 110);
 }
 
 

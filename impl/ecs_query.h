@@ -5,6 +5,8 @@
 namespace ECS
 {
 	bool FinalizeTerm(Term& term);
+	Iterator GetTermIterator(WorldImpl* world, Term& term);
+	bool NextTermIter(Iterator* it);
 	bool InitFilter(const FilterCreateDesc& desc, Filter& outFilter);
 	void FiniFilter(Filter& filter);
 	Iterator GetFilterIterator(WorldImpl* world, Filter& filter);

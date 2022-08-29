@@ -189,6 +189,7 @@ namespace ECS
 		return true;
 	}
 
+
 	void InitTermIterNoData(TermIterator& iter)
 	{
 		iter.term = {};
@@ -225,6 +226,32 @@ namespace ECS
 		{
 			InitTermIterNoData(iter);
 		}
+	}
+
+	Iterator GetTermIterator(WorldImpl* world, Term& term)
+	{
+		ECS_ASSERT(world != nullptr);
+
+		world = GetWorld(world);
+
+		FlushPendingTables(world);
+
+		if (!FinalizeTerm(term))
+		{
+			ECS_ASSERT(false);
+		}
+
+		Iterator iter = {};
+		iter.world = world;
+		iter.next = NextTermIter;
+
+		// Finally init iterator
+		InitIterator(iter, ITERATOR_CACHE_MASK_ALL);
+
+		// Init private term iterator
+		InitTermIter(world, term, iter.priv.iter.term, false);
+
+		return iter;
 	}
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -1348,6 +1375,38 @@ namespace ECS
 		} while (true);
 
 		return true;
+	}
+
+	bool NextTermIter(Iterator* it)
+	{
+		ECS_ASSERT(it != nullptr);
+		ECS_ASSERT(it->next == NextTermIter);
+
+		WorldImpl* world = static_cast<WorldImpl*>(it->world);
+		TermIterator& termIt = it->priv.iter.term;
+		Iterator* chain = it->chainIter;
+		EntityTable* table = nullptr;
+
+		ECS_ASSERT(chain == nullptr);
+		ValidateInteratorCache(*it);
+
+		it->ids = &termIt.id;
+		it->columns = &termIt.column;
+		it->terms = &termIt.term;
+		it->sizes = &termIt.size;
+		it->ptrs = nullptr;
+
+		if (!TermIteratorNext(world, &termIt))
+			goto done;
+
+		table = termIt.table;
+		ECS_ASSERT(table != nullptr);
+		IteratorPopulateData(world, *it, table, 0, 0, it->sizes, it->ptrs);
+		return true;
+
+	done:
+		FiniIterator(*it);
+		return false;
 	}
 
 	bool FilterNextInstanced(Iterator* it)

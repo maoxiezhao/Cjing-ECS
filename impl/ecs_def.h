@@ -238,6 +238,8 @@ namespace ECS
 		I32 matchCount;
 		I32 column;
 		I32 index;
+		size_t size;
+		void* ptr;
 	};
 
 	struct FilterIterator

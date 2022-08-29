@@ -46,6 +46,7 @@ namespace ECS
 	void SetComponent(WorldImpl* world, EntityID entity, EntityID compID, size_t size, const void* ptr, bool isMove);
 	bool HasComponent(WorldImpl* world, EntityID entity, EntityID compID);
 	void ModifiedComponent(WorldImpl* world, EntityID entity, EntityID compID);
+	I32 CountComponent(WorldImpl* world, EntityID compID);
 
 	// Compoennt record
 	ComponentRecord* EnsureComponentRecord(WorldImpl* world, EntityID compID);
