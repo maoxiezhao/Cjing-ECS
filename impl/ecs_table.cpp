@@ -5,6 +5,7 @@
 #include "ecs_iter.h"
 #include "ecs_observer.h"
 #include "ecs_stage.h"
+#include "ecs_entity.h"
 
 namespace ECS
 {
@@ -1746,6 +1747,32 @@ namespace ECS
 				flags |= TableFlagHasCopy;
 			if (hooks.move)
 				flags |= TableFlagHasMove;
+		}
+	}
+
+	void TableNotifyOnSet(WorldImpl* world, EntityTable* table, I32 row, I32 count, EntityID compID)
+	{
+		ECS_ASSERT(world != NULL);
+		ECS_ASSERT(row + count <= table->entities.size());
+		EntityID* entities = &table->entities[row];
+		TableComponentRecord* record = GetTableRecord(world, table, compID);
+		if (record == nullptr)
+			return;
+
+		ComponentTypeInfo* typeInfo = &table->compTypeInfos[record->data.column];
+		auto onSetCallback = typeInfo->hooks.onSet;
+		if (onSetCallback)
+		{
+			OnComponentCallback(
+				world,
+				table,
+				typeInfo,
+				onSetCallback,
+				&table->storageColumns[record->data.column],
+				entities,
+				compID,
+				row,
+				count);
 		}
 	}
 }

@@ -56,6 +56,8 @@ namespace ECS
 	using EntityIDs = Vector<EntityID>;
 	using EntityType = Vector<EntityID>;
 
+	#define ECS_NAME_BUFFER_LENGTH 64
+
 	#define ECS_BIT_SET(flags, bit) (flags) |= (bit)
 	#define ECS_BIT_CLEAR(flags, bit) (flags) &= ~(bit) 
 	#define ECS_BIT_COND(flags, bit, cond) ((cond) \

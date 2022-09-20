@@ -9,6 +9,25 @@ namespace ECS
 
 	const EntityID HiComponentID = 256;
 
+	struct InfoComponent
+	{
+		size_t size = 0;
+		size_t algnment = 0;
+	};
+
+	struct NameComponent
+	{
+		const char* name = nullptr;
+		U64 hash = 0;
+	};
+
+	extern EntityID ECS_ENTITY_ID(InfoComponent);
+	extern EntityID ECS_ENTITY_ID(NameComponent);
+	extern EntityID ECS_ENTITY_ID(SystemComponent);
+	extern EntityID ECS_ENTITY_ID(PipelineComponent);
+	extern EntityID ECS_ENTITY_ID(TriggerComponent);
+	extern EntityID ECS_ENTITY_ID(ObserverComponent);
+
 	////////////////////////////////////////////////////////////////////////////////
 	//// Entity info
 	////////////////////////////////////////////////////////////////////////////////
@@ -131,7 +150,8 @@ namespace ECS
 		TableFlagHasDtors = 1 << 5,
 		TableFlagHasCopy = 1 << 6,
 		TableFlagHasMove = 1 << 7,
-		TableFlagDisabled = 1 << 8
+		TableFlagDisabled = 1 << 8,
+		TableFlagHasOnSet = 1 << 9
 	};
 
 	struct TableComponentRecordData
@@ -213,6 +233,7 @@ namespace ECS
 	{
 		EntityTableCache<TableComponentRecord> cache;
 		bool typeInfoInited = false;
+		Hashmap<EntityID> entityNameMap;
 		ComponentTypeInfo* typeInfo = nullptr;
 	};
 
@@ -378,6 +399,7 @@ namespace ECS
 	{
 		bool isReadonly = false;
 		bool isDeferred = false;
+		EntityID scope = INVALID_ENTITYID;
 		I32 defer = 0;
 		Vector<DeferOperation> deferQueue;
 		Util::Stack deferStack;
@@ -390,6 +412,7 @@ namespace ECS
 
 		// Base info
 		I32 id = 0;
+		EntityID scope;
 
 		// Thread
 		void* thread = 0;	
@@ -414,8 +437,6 @@ namespace ECS
 
 		// Entity
 		Util::SparseArray<EntityInfo> entityPool;
-		Hashmap<EntityID> entityNameMap;
-		std::mutex nameMutex;
 
 		// Tables
 		EntityTable root;

@@ -1,37 +1,13 @@
 #pragma once
 
 #include "ecs_def.h"
+#include "ecs_priv_types.h"
 
 namespace ECS
 {
 	struct WorldImpl;
 	struct ComponentRecord;
 	struct Stage;
-
-	////////////////////////////////////////////////////////////////////////////////
-	//// Entity
-	////////////////////////////////////////////////////////////////////////////////
-
-	EntityID CreateEntityID(WorldImpl* world, const EntityCreateDesc& desc);
-	void EnsureEntity(WorldImpl* world, EntityID entity);
-	EntityID FindEntityIDByName(WorldImpl* world, const char* name);
-	bool EntityExists(WorldImpl* world, EntityID entity);
-	bool IsEntityValid(WorldImpl* world, EntityID entity);
-	bool IsEntityAlive(WorldImpl* world, EntityID entity);
-	bool CheckIDHasPropertyNone(EntityID id);
-	void DeleteEntity(WorldImpl* world, EntityID entity);
-	EntityID GetAliveEntity(WorldImpl* world, EntityID entity);
-	const EntityType& GetEntityType(WorldImpl* world, EntityID entity);
-	EntityID GetRealTypeID(WorldImpl* world, EntityID compID);
-	bool MergeEntityType(EntityType& entityType, EntityID compID);
-	void RemoveFromEntityType(EntityType& entityType, EntityID compID);
-	void Instantiate(WorldImpl* world, EntityID entity, EntityID prefab);
-	void ChildOf(WorldImpl* world, EntityID entity, EntityID parent);
-	void SetEntityName(WorldImpl* world, EntityID entity, const char* name);
-	const char* GetEntityName(WorldImpl* world, EntityID entity);
-	EntityID GetParent(WorldImpl* world, EntityID entity);
-	void EnableEntity(WorldImpl* world, EntityID entity, bool enabled);
-	void ClearEntity(WorldImpl* world, EntityID entity);
 
 	////////////////////////////////////////////////////////////////////////////////
 	//// Coomponent
@@ -47,6 +23,7 @@ namespace ECS
 	bool HasComponent(WorldImpl* world, EntityID entity, EntityID compID);
 	void ModifiedComponent(WorldImpl* world, EntityID entity, EntityID compID);
 	I32 CountComponent(WorldImpl* world, EntityID compID);
+	InfoComponent* GetComponentInfo(WorldImpl* world, EntityID compID);
 
 	// Compoennt record
 	ComponentRecord* EnsureComponentRecord(WorldImpl* world, EntityID compID);

@@ -2,6 +2,7 @@
 #include "ecs_observer.h"
 #include "ecs_world.h"
 #include "ecs_query.h"
+#include "ecs_entity.h"
 
 namespace ECS
 {

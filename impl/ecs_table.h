@@ -29,4 +29,6 @@ namespace ECS
 
 	EntityTableCacheItem* GetTableCacheListIterNext(EntityTableCacheIterator& iter);
 	EntityTableCacheIterator GetTableCacheListIter(EntityTableCacheBase* cache, bool emptyTable);
+
+	void TableNotifyOnSet(WorldImpl* world, EntityTable* table, I32 row, I32 count, EntityID compID);
 }

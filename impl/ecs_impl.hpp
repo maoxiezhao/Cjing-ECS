@@ -7,3 +7,4 @@
 #include "impl\ecs_query.h"
 #include "impl\ecs_system.h"
 #include "impl\ecs_pipeline.h"
+#include "impl\ecs_entity.h"

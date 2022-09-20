@@ -2,6 +2,7 @@
 #include "ecs_stage.h"
 #include "ecs_world.h"
 #include "ecs_table.h"
+#include "ecs_entity.h"
 
 namespace ECS
 {
@@ -290,6 +291,7 @@ namespace ECS
 		stage->defer = 0;
 		stage->deferQueue.clear();
 		stage->deferStack.Init();
+		state->scope = stage->scope;
 	}
 
 	void ResumeReadonly(WorldImpl* world, SuspendReadonlyState* state)
@@ -308,6 +310,7 @@ namespace ECS
 		stage->deferQueue = state->deferQueue;
 		state->deferStack.Uninit();
 		stage->deferStack = state->deferStack;
+		stage->scope = state->scope;
 	}
 
 	bool DoDeferOperation(WorldImpl* world, Stage* stage)

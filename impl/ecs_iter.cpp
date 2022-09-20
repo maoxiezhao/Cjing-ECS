@@ -2,6 +2,7 @@
 #include "ecs_world.h"
 #include "ecs_iter.h"
 #include "ecs_table.h"
+#include "ecs_entity.h"
 
 namespace ECS
 {

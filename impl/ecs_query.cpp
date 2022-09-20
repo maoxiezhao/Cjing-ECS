@@ -5,6 +5,7 @@
 #include "ecs_observer.h"
 #include "ecs_iter.h"
 #include "ecs_stage.h"
+#include "ecs_entity.h"
 
 namespace ECS
 {

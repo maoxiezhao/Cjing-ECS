@@ -7,6 +7,7 @@
 #include "ecs_observer.h"
 #include "ecs_pipeline.h"
 #include "ecs_stage.h"
+#include "ecs_entity.h"
 
 namespace ECS
 {
@@ -17,6 +18,18 @@ namespace ECS
 
 	const EntityID EcsRolePair = ((0x01ull) << 56);
 	const EntityID EcsRoleShared = ((0x02ull) << 56);
+
+	EntityID BuiltinComponentID = 1;
+#define BUILTIN_COMPONENT_ID (BuiltinComponentID++)
+
+	EntityID ECS_ENTITY_ID(InfoComponent) = BUILTIN_COMPONENT_ID;
+	EntityID ECS_ENTITY_ID(NameComponent) = BUILTIN_COMPONENT_ID;
+	EntityID ECS_ENTITY_ID(SystemComponent) = BUILTIN_COMPONENT_ID;
+	EntityID ECS_ENTITY_ID(PipelineComponent) = BUILTIN_COMPONENT_ID;
+	EntityID ECS_ENTITY_ID(TriggerComponent) = BUILTIN_COMPONENT_ID;
+	EntityID ECS_ENTITY_ID(ObserverComponent) = BUILTIN_COMPONENT_ID;
+
+	const EntityID EcsCompSystem = ECS_ENTITY_ID(SystemComponent);
 
 	const size_t ENTITY_PAIR_FLAG = EcsRolePair;
 
@@ -77,6 +90,9 @@ namespace ECS
 	EntityID BuiltinEntityID = HiComponentID;
 	#define BUILTIN_ENTITY_ID (BuiltinEntityID++)
 
+	// Core
+	const EntityID EcsEcs = BUILTIN_ENTITY_ID;
+
 	// properties
 	const EntityID EcsPropertyTag = BUILTIN_ENTITY_ID;
 	const EntityID EcsPropertyNone = BUILTIN_ENTITY_ID;
@@ -120,30 +136,6 @@ namespace ECS
 		}
 	}
 
-	struct InfoComponent
-	{
-		size_t size = 0;
-		size_t algnment = 0;
-	};
-
-	struct NameComponent
-	{
-		const char* name = nullptr;
-		U64 hash = 0;
-	};
-
-	EntityID BuiltinComponentID = 1;
-#define BUILTIN_COMPONENT_ID (BuiltinComponentID++)
-
-	EntityID ECS_ENTITY_ID(InfoComponent) = BUILTIN_COMPONENT_ID;
-	EntityID ECS_ENTITY_ID(NameComponent) = BUILTIN_COMPONENT_ID;
-	EntityID ECS_ENTITY_ID(SystemComponent) = BUILTIN_COMPONENT_ID;
-	EntityID ECS_ENTITY_ID(PipelineComponent) = BUILTIN_COMPONENT_ID;
-	EntityID ECS_ENTITY_ID(TriggerComponent) = BUILTIN_COMPONENT_ID;
-	EntityID ECS_ENTITY_ID(ObserverComponent) = BUILTIN_COMPONENT_ID;
-
-	const EntityID EcsCompSystem = ECS_ENTITY_ID(SystemComponent);
-
 	const U32 ECS_DEFINE_OBEJCT(WorldImpl) = 0x63632367;
 	const U32 ECS_DEFINE_OBEJCT(Stage) = 0x63632368;
 
@@ -179,476 +171,6 @@ namespace ECS
 	////////////////////////////////////////////////////////////////////////////////
 	//// WorldImpl
 	////////////////////////////////////////////////////////////////////////////////
-
-	// Check id is PropertyNone
-	bool CheckIDHasPropertyNone(EntityID id)
-	{
-		return (id == EcsPropertyNone) || (ECS_HAS_ROLE(id, EcsRolePair)
-			&& (ECS_GET_PAIR_FIRST(id) == EcsPropertyNone ||
-				ECS_GET_PAIR_SECOND(id) == EcsPropertyNone));
-	}
-
-	bool IsCompIDValid(EntityID id)
-	{
-		if (id == INVALID_ENTITYID)
-			return false;
-
-		if (CheckIDHasPropertyNone(id))
-			return false;
-
-		if (ECS_HAS_ROLE(id, EcsRolePair))
-		{
-			if (!ECS_GET_PAIR_FIRST(id))
-				return false;
-
-			if (!ECS_GET_PAIR_SECOND(id))
-				return false;
-		}
-		return true;
-	}
-
-	// Get alive entity, is essentially used for PariEntityID
-	EntityID GetAliveEntity(WorldImpl* world, EntityID entity)
-	{
-		// if entity has generation, just check is alived
-		// if entity does not have generation, get a new entity with generation
-
-		if (entity == INVALID_ENTITYID)
-			return INVALID_ENTITYID;
-
-		if (IsEntityAlive(world, entity))
-			return entity;
-
-		// Make sure id does not have generation
-		ECS_ASSERT((U32)entity == entity);
-
-		// Get current alived entity with generation
-		world = GetWorld(world);
-		EntityID current = world->entityPool.GetAliveIndex(entity);
-		if (current == INVALID_ENTITYID)
-			return INVALID_ENTITYID;
-
-		return current;
-	}
-
-	InfoComponent* GetComponentInfo(WorldImpl* world, EntityID compID)
-	{
-		ECS_ASSERT(world != nullptr);
-		ECS_ASSERT(compID != INVALID_ENTITYID);
-		world = GetWorld(world);
-		return (InfoComponent*)(GetComponent(world, compID, ECS_ENTITY_ID(InfoComponent)));
-	}
-
-	EntityID GetRealTypeID(WorldImpl* world, EntityID compID)
-	{
-		if (compID == ECS_ENTITY_ID(InfoComponent) ||
-			compID == ECS_ENTITY_ID(NameComponent))
-			return compID;
-
-		if (ECS_HAS_ROLE(compID, EcsRolePair))
-		{
-			EntityID relation = ECS_GET_PAIR_FIRST(compID);
-			if (relation == EcsRelationChildOf)
-				return 0;
-
-			relation = GetAliveEntity(world, relation);
-
-			// Tag dose not have type info, return zero
-			if (HasComponent(world, relation, EcsPropertyTag))
-				return INVALID_ENTITYID;
-
-			InfoComponent* info = GetComponentInfo(world, relation);
-			if (info && info->size != 0)
-				return relation;
-
-			EntityID object = ECS_GET_PAIR_SECOND(compID);
-			if (object != INVALID_ENTITYID)
-			{
-				object = GetAliveEntity(world, object);
-				info = GetComponentInfo(world, object);
-				if (info && info->size != 0)
-					return object;
-			}
-
-			// No matching relation
-			return 0;
-		}
-		else if (compID & ECS_ROLE_MASK)
-		{
-			return 0;
-		}
-		else
-		{
-			InfoComponent* info = GetComponentInfo(world, compID);
-			if (!info || info->size == 0)
-				return 0;
-		}
-
-		return compID;
-	}
-
-
-	EntityID CreateNewEntityID(WorldImpl* world)
-	{
-		world = GetWorld(world);
-		if (world->isMultiThreaded)
-		{
-			ECS_ASSERT(world->lastID < UINT_MAX);
-			return Util::AtomicIncrement((I64*)&world->lastID);
-		}
-		else
-		{
-			return world->entityPool.NewIndex();
-		}
-	}
-
-	EntityID CreateNewComponentID(WorldImpl* world)
-	{
-		world = GetWorld(world);
-		if (world->isReadonly)
-		{
-			// Can't create new component id when in multithread
-			ECS_ASSERT(GetStageCount(world) <= 1);
-		}
-
-		EntityID ret = INVALID_ENTITYID;
-		if (world->lastComponentID < HiComponentID)
-		{
-			do {
-				ret = world->lastComponentID++;
-			} while (EntityExists(world, ret) != INVALID_ENTITYID && ret <= HiComponentID);
-		}
-
-		if (ret == INVALID_ENTITYID || ret >= HiComponentID)
-			ret = CreateNewEntityID(world);
-
-		return ret;
-	}
-
-	void SetEntityNameImpl(WorldImpl* world, EntityID entity, const char* name)
-	{
-		world = GetWorld(world);
-		{
-			std::lock_guard<std::mutex> lock(world->nameMutex);
-			world->entityNameMap[Util::HashFunc(name, strlen(name))] = entity;
-		}
-		SetEntityName(world, entity, name);
-	}
-
-	bool EntityTraverseAdd(WorldImpl* world, EntityID entity, const EntityCreateDesc& desc, bool nameAssigned, bool isNewEntity)
-	{
-		world = GetWorld(world);
-
-		EntityTable* srcTable = nullptr, * table = nullptr;
-		EntityInfo* info = nullptr;
-
-		// Get existing table
-		if (!isNewEntity)
-		{
-			info = world->entityPool.Get(entity);
-			if (info != nullptr)
-				table = info->table;
-		}
-
-		EntityTableDiff diff = EMPTY_TABLE_DIFF;
-
-		// Add name component
-		const char* name = desc.name;
-		if (name && !nameAssigned)
-			table = TableAppend(world, table, ECS_ENTITY_ID(NameComponent), diff);
-
-		// Commit entity table
-		if (srcTable != table)
-		{
-			CommitTables(world, entity, info, table, diff, true);
-		}
-
-		if (name && !nameAssigned)
-		{
-			SetEntityNameImpl(world, entity, name);
-		}
-
-		return true;
-	}
-
-	// In deferred mode, we should add components for entity one by one
-	void DeferredAddEntity(WorldImpl* world, Stage* stage, EntityID entity, const char* name, const EntityCreateDesc& desc, bool newEntity, bool nameAssigned)
-	{
-		I32 stageCount = GetStageCount(world);
-		if (name && !nameAssigned)
-		{
-			if (stageCount <= 1)
-			{
-				SuspendReadonlyState state;
-
-				// Running in a single thread, we can just leave readonly mode
-				// to be enable to add tow entities with same name
-				SuspendReadonly(world, &state);
-				SetEntityNameImpl(world, entity, name);
-				ResumeReadonly(world, &state);
-			}
-			else
-			{
-				// In multithreaded mode we can't leave readonly mode
-				// There is a risk to create entities with same name
-				SetEntityNameImpl(world, entity, name);
-			}
-		}
-	}
-
-	EntityID CreateEntityID(WorldImpl* world, const EntityCreateDesc& desc)
-	{
-		ECS_ASSERT(world != nullptr);
-		Stage* stage = GetStageFromWorld(&world);
-
-		const char* name = desc.name;
-		bool isNewEntity = false;
-		bool nameAssigned = false;
-		EntityID result = desc.entity;
-		if (result == INVALID_ENTITYID)
-		{
-			if (name != nullptr)
-			{
-				result = FindEntityIDByName(world, name);
-				if (result != INVALID_ENTITYID)
-					nameAssigned = true;
-			}
-
-			if (result == INVALID_ENTITYID)
-			{
-				if (desc.useComponentID)
-					result = CreateNewComponentID(world);
-				else
-					result = CreateNewEntityID(world);
-
-				isNewEntity = true;
-			}
-		}
-		else
-		{
-			EnsureEntity(world, result);
-		}
-
-		if (stage->defer)
-			DeferredAddEntity(world, stage, result, name, desc, isNewEntity, nameAssigned);
-		else
-			if (!EntityTraverseAdd(world, result, desc, nameAssigned, isNewEntity))
-				return INVALID_ENTITYID;
-
-		return result;
-	}
-
-	EntityID FindEntityIDByName(WorldImpl* world, const char* name)
-	{
-		world = GetWorld(world);
-		EntityID ret = INVALID_ENTITYID;
-		{
-			// First find from entityNameMap
-			std::lock_guard<std::mutex> lock(world->nameMutex);
-			auto it = world->entityNameMap.find(Util::HashFunc(name, strlen(name)));
-			if (it != world->entityNameMap.end())
-				ret =  it->second;
-		}
-
-		// Init a filter to get all entity which has NameComponent
-		// TODO...
-
-		return ret;
-	}
-
-	void SetEntityName(WorldImpl* world, EntityID entity, const char* name)
-	{
-		NameComponent nameComp = {};
-		nameComp.name = _strdup(name);
-		nameComp.hash = Util::HashFunc(name, strlen(name));
-		SetComponent(world, entity, ECS_ENTITY_ID(NameComponent), sizeof(NameComponent), &nameComp, false);
-	}
-
-	const char* GetEntityName(WorldImpl* world, EntityID entity)
-	{
-		ECS_ASSERT(IsEntityValid(world, entity));
-		const NameComponent* ptr = static_cast<const NameComponent*>(GetComponent(world, entity, ECS_ENTITY_ID(NameComponent)));
-		return ptr ? ptr->name : nullptr;
-	}
-
-	void DeleteEntity(WorldImpl* world, EntityID entity)
-	{
-		ECS_ASSERT(entity != INVALID_ENTITYID);
-
-		auto stage = GetStageFromWorld(&world);
-		if (DeferDelete(world, stage, entity))
-			return;
-
-		EntityInfo* entityInfo = world->entityPool.Get(entity);
-		if (entityInfo != nullptr)
-		{
-			U64 tableID = 0;
-			if (entityInfo->table)
-				tableID = entityInfo->table->tableID;
-
-			if (tableID > 0 && world->tablePool.CheckExsist(tableID))
-				entityInfo->table->DeleteEntity(entityInfo->row, true);
-
-			entityInfo->row = 0;
-			entityInfo->table = nullptr;
-			world->entityPool.Remove(entity);
-		}
-
-		EndDefer(world);
-	}
-
-	const EntityType& GetEntityType(WorldImpl* world, EntityID entity)
-	{
-		world = GetWorld(world);
-		const EntityInfo* info = world->entityPool.Get(entity);
-		if (info == nullptr || info->table == nullptr)
-			return EMPTY_ENTITY_TYPE;
-
-		return info->table->type;
-	}
-
-	bool MergeEntityType(EntityType& entityType, EntityID compID)
-	{
-		for (auto it = entityType.begin(); it != entityType.end(); it++)
-		{
-			EntityID id = *it;
-			if (id == compID)
-				return false;
-
-			if (id > compID)
-			{
-				entityType.insert(it, compID);
-				return true;
-			}
-		}
-		entityType.push_back(compID);
-		return true;
-	}
-
-	void RemoveFromEntityType(EntityType& entityType, EntityID compID)
-	{
-		if (CheckIDHasPropertyNone(compID))
-		{
-			ECS_ASSERT(0);
-			return;
-		}
-
-		auto it = std::find(entityType.begin(), entityType.end(), compID);
-		if (it != entityType.end())
-			entityType.erase(it);
-	}
-
-	EntityID GetRelationObject(WorldImpl* world, EntityID entity, EntityID relation, U32 index = 0)
-	{
-		EntityTable* table = GetTable(world, entity);
-		if (table == nullptr)
-			return INVALID_ENTITYID;
-
-		TableComponentRecord* record = GetTableRecord(world, table, ECS_MAKE_PAIR(relation, EcsPropertyNone));
-		if (record == nullptr)
-			return INVALID_ENTITYID;
-
-		if (index >= (U32)record->data.count)
-			return INVALID_ENTITYID;
-
-		return ECS_GET_PAIR_SECOND(table->type[record->data.column + index]);
-	}
-
-	EntityID GetParent(WorldImpl* world, EntityID entity)
-	{
-		return GetRelationObject(world, entity, EcsRelationChildOf, 0);
-	}
-
-	void EnableEntity(WorldImpl* world, EntityID entity, bool enabled)
-	{
-		if (enabled)
-			RemoveComponent(world, entity, EcsTagDisabled);
-		else
-			AddComponent(world, entity, EcsTagDisabled);
-	}
-
-	void ClearEntity(WorldImpl* world, EntityID entity)
-	{
-		ECS_ASSERT(world != nullptr);
-		ECS_ASSERT(IsEntityValid(world, entity));
-
-		Stage* stage = GetStageFromWorld(&world);
-		if (DeferClear(world, stage, entity))
-			return;
-
-		EntityInfo* entityInfo = world->entityPool.Get(entity);
-		if (entityInfo == nullptr)
-			return;
-
-		EntityTable* table = entityInfo->table;
-		if (table)
-		{
-			table->DeleteEntity(entityInfo->row, true);
-			entityInfo->table = nullptr;
-			entityInfo->row = 0;
-		}
-
-		EndDefer(world);
-	}
-
-	void EnsureEntity(WorldImpl* world, EntityID entity)
-	{
-		world = GetWorld(world);
-		if (ECS_HAS_ROLE(entity, EcsRolePair))
-		{
-			EntityID re = ECS_GET_PAIR_FIRST(entity);
-			EntityID comp = ECS_GET_PAIR_SECOND(entity);
-
-			if (GetAliveEntity(world, re) != re)
-				world->entityPool.Ensure(re);
-
-			if (GetAliveEntity(world, comp) != comp)
-				world->entityPool.Ensure(comp);
-		}
-		else
-		{
-			if (GetAliveEntity(world, StripGeneration(entity)) == entity)
-				return;
-
-			world->entityPool.Ensure(entity);
-		}
-	}
-
-	bool IsEntityAlive(WorldImpl* world, EntityID entity)
-	{
-		ECS_ASSERT(world != nullptr);
-		ECS_ASSERT(entity != INVALID_ENTITYID);
-
-		world = GetWorld(world);
-		return world->entityPool.Get(entity) != nullptr;
-	}
-
-	bool EntityExists(WorldImpl* world, EntityID entity)
-	{
-		ECS_ASSERT(world != nullptr);
-		ECS_ASSERT(entity != INVALID_ENTITYID);
-		world = GetWorld(world);
-		return world->entityPool.CheckExsist(entity);
-	}
-
-	bool IsEntityValid(WorldImpl* world, EntityID entity)
-	{
-		ECS_ASSERT(world != nullptr);
-
-		if (entity == INVALID_ENTITYID)
-			return false;
-
-		world = GetWorld(world);
-
-		// Entity identifiers should not contain flag bits
-		if (entity & ECS_ROLE_MASK)
-			return false;
-
-		if (!EntityExists(world, entity))
-			return ECS_GENERATION(entity) == 0;
-
-		return IsEntityAlive(world, entity);
-	}
 
 	void AddComponentForEntity(WorldImpl* world, EntityID entity, EntityInfo* info, EntityID compID)
 	{
@@ -825,6 +347,33 @@ namespace ECS
 		return comp;
 	}
 
+	InfoComponent* GetComponentInfo(WorldImpl* world, EntityID compID)
+	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(compID != INVALID_ENTITYID);
+		world = GetWorld(world);
+		return (InfoComponent*)(GetComponent(world, compID, ECS_ENTITY_ID(InfoComponent)));
+	}
+
+	bool IsCompIDValid(EntityID id)
+	{
+		if (id == INVALID_ENTITYID)
+			return false;
+
+		if (CheckIDHasPropertyNone(id))
+			return false;
+
+		if (ECS_HAS_ROLE(id, EcsRolePair))
+		{
+			if (!ECS_GET_PAIR_FIRST(id))
+				return false;
+
+			if (!ECS_GET_PAIR_SECOND(id))
+				return false;
+		}
+		return true;
+	}
+
 	void AddComponent(WorldImpl* world, EntityID entity, EntityID compID)
 	{
 		ECS_ASSERT(IsEntityValid(world, entity));
@@ -906,10 +455,15 @@ namespace ECS
 		if (DeferModified(world, stage, entity, compID))
 			return;
 
-		// Table column dirty
 		EntityInfo* info = world->entityPool.Get(entity);
 		if (info->table != nullptr)
+		{
+			// Notify OnSetEvent
+			TableNotifyOnSet(world, info->table, info->row, 1, compID);
+
+			// Table column dirty
 			info->table->SetColumnDirty(compID);
+		}
 
 		EndDefer(world);
 	}
@@ -1118,6 +672,26 @@ namespace ECS
 		info.dtor = Reflect::Dtor<NameComponent>();
 		info.copy = Reflect::Copy<NameComponent>();
 		info.move = Reflect::Move<NameComponent>();
+		info.onSet = [](Iterator* it) 
+		{
+			ECS_ASSERT(it->world != nullptr);
+			WorldImpl* world = GetWorld(it->world);
+
+			EntityID pair = ECS_MAKE_PAIR(EcsRelationChildOf, 0);
+			I32 index = TableSearchType(it->table, ECS_MAKE_PAIR(EcsRelationChildOf, EcsPropertyNone));
+			if (index >= 0)
+				pair = it->table->type[index];
+
+			auto idRecord = GetComponentRecord(world, pair);
+			if (idRecord == nullptr)
+				return;
+
+			for (int i = 0; i < it->count; i++)
+			{
+				const char* name = ((NameComponent*)it->ptrs[i])->name;
+				idRecord->entityNameMap[Util::HashFunc(name, strlen(name))] = it->entities[i];
+			}
+		};
 		SetComponentTypeInfo(world, ECS_ENTITY_ID(NameComponent), info);
 
 		// Trigger component
@@ -1135,6 +709,9 @@ namespace ECS
 
 	void InitBuiltinComponents(WorldImpl* world)
 	{
+		world->entityPool.Ensure(EcsEcs);
+		SetEntityName(world, EcsEcs, "ECS");
+
 		// Create builtin table for builtin components
 		EntityTable* table = nullptr;
 		{
@@ -1166,8 +743,6 @@ namespace ECS
 			NameComponent* nameComponent = table->storageColumns[1].Get<NameComponent>(index);
 			nameComponent->name = _strdup(compName);
 			nameComponent->hash = Util::HashFunc(compName, strlen(compName));
-
-			world->entityNameMap[nameComponent->hash] = compID;
 		};
 
 		InitBuiltinComponent(ECS_ENTITY_ID(InfoComponent), sizeof(InfoComponent), alignof(InfoComponent), Util::Typename<InfoComponent>());

@@ -80,6 +80,7 @@ namespace ECS
 	#define ECS_CALLOC(n) ecsSystemAPI.calloc_(n)
 	#define ECS_CALLOC_T(T) (T*)ecsSystemAPI.calloc_(sizeof(T))
 	#define ECS_CALLOC_T_N(T, n) (T*)ecsSystemAPI.calloc_(n * sizeof(T))
+	#define ECS_REALLOC(ptr, n)ecsSystemAPI.realloc_(ptr, n);
 	#define ECS_NEW_PLACEMENT(mem, T) new (mem) T()
 	#define ECS_FREE(ptr) ecsSystemAPI.free_(ptr)
 

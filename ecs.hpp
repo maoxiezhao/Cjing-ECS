@@ -341,6 +341,7 @@ namespace ECS
 		}
 
 		ECS::Entity Entity(const char* name)const;
+		ECS::Entity Entity()const;
 		ECS::Entity Prefab(const char* name)const;
 		ECS::Entity FindEntity(const char* name)const;
 
@@ -623,6 +624,13 @@ namespace ECS
 	struct Entity : public EntityBuilderInst<Entity>
 	{
 		Entity() = default;
+
+		explicit Entity(WorldImpl* world_)
+		{
+			world = world_;
+			EntityCreateDesc desc = {};
+			entityID = CreateEntityID(world, desc);
+		}
 
 		explicit Entity(WorldImpl* world_, const char* name)
 		{
@@ -1185,6 +1193,11 @@ namespace ECS
 	inline ECS::Entity World::Entity(const char* name) const
 	{
 		return ECS::Entity(world, name);
+	}
+
+	inline ECS::Entity World::Entity() const
+	{
+		return ECS::Entity(world);
 	}
 
 	inline ECS::Entity World::Prefab(const char* name) const
