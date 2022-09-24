@@ -154,6 +154,9 @@ namespace Util
 #define ECS_ALIGN(size, alignment) (size_t)((((((size_t)size) - 1) / ((size_t)alignment)) + 1) * ((size_t)alignment))
 #define ECS_OFFSET(o, offset) reinterpret_cast<void*>((reinterpret_cast<uintptr_t>(o)) + (static_cast<uintptr_t>(offset)))
 
+#define ECS_ELEM(ptr, size, index) ECS_OFFSET(ptr, (size) * (index))
+#define ECS_ELEM_T(o, T, index) ECS_ELEM(o, sizeof(T), index)
+
 	struct Stack
 	{
 		Stackpage first;
@@ -361,8 +364,11 @@ namespace Util
 			count--;
 			if (index != count)
 			{
-				void* lastElem = PTR_OFFSET(data, elemSize * count);
-				memcpy(data, lastElem, elemSize);
+				memcpy(
+					ECS_ELEM(data, elemSize, index),
+					ECS_ELEM(data, elemSize, count),
+					elemSize
+				);
 			}
 		}
 

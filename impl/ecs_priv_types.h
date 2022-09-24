@@ -17,7 +17,7 @@ namespace ECS
 
 	struct NameComponent
 	{
-		const char* name = nullptr;
+		char* name = nullptr;
 		U64 hash = 0;
 	};
 

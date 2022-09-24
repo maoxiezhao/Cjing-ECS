@@ -23,6 +23,7 @@ namespace ECS
 	void ChildOf(WorldImpl* world, EntityID entity, EntityID parent);
 	void SetEntityName(WorldImpl* world, EntityID entity, const char* name);
 	const char* GetEntityName(WorldImpl* world, EntityID entity);
+	String GetEntityPath(WorldImpl* world, EntityID entity);
 	EntityID GetParent(WorldImpl* world, EntityID entity);
 	void EnableEntity(WorldImpl* world, EntityID entity, bool enabled);
 	void ClearEntity(WorldImpl* world, EntityID entity);

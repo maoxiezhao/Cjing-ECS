@@ -80,18 +80,21 @@ TEST_CASE("Basic", "ECS")
 TEST_CASE("Name", "ECS")
 {
     ECS::World world;
-    ECS::Entity a = world.Entity("A::B");
+    ECS::Entity a = world.Entity("A.B");
     ECS::Entity b = world.Entity("B");
     ECS::Entity c = world.Entity();
-    ECS::Entity d = world.Entity("A::B");
+    ECS::Entity d = world.Entity("A.B");
 
     CHECK(strcmp(a.GetName(), "B") == 0);
     CHECK(strcmp(b.GetName(), "B") == 0);
     CHECK(world.FindEntity("B") == b);
     CHECK(d == a);
 
-    ECS::Entity ret = world.FindEntity("A::B");
+    ECS::Entity ret = world.FindEntity("A.B");
     CHECK(ret == a);
+
+    String path = a.GetPath();
+    CHECK(strcmp(path.c_str(), "A.B") == 0);
 }
 
 TEST_CASE("System", "ECS")

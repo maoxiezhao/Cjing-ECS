@@ -597,9 +597,14 @@ namespace ECS
 			SetEntityName(world, entityID, name);
 		}
 
-		const char* GetName()
+		const char* GetName()const
 		{
 			return GetEntityName(world, entityID);
+		}
+
+		String GetPath()const
+		{
+			return GetEntityPath(world, entityID);
 		}
 
 		void Enable()

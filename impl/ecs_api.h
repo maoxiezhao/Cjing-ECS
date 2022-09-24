@@ -11,6 +11,7 @@
 #include <type_traits>
 #include <functional>
 #include <mutex>
+#include <string>
 
 #ifndef ECS_STATIC
 #if ECS_EXPORTS && (defined(_MSC_VER) || defined(__MINGW32__))
@@ -42,6 +43,7 @@ namespace ECS
 	typedef void* (*ecs_os_api_calloc_t)(size_t size);
 	typedef void (*ecs_os_api_thread_run)(void* ctx, void* stage, U64 pipeline);
 	typedef void (*ecs_os_api_thread_sync)(void* ptr);
+	typedef char* (*ecs_os_api_strdup_t)(const char* str);
 
 	struct EcsSystemAPI
 	{
@@ -51,6 +53,7 @@ namespace ECS
 		ecs_os_api_free_t free_;
 		ecs_os_api_thread_run thread_run_;
 		ecs_os_api_thread_sync thread_sync_;
+		ecs_os_api_strdup_t strdup_;
 	};
 	extern EcsSystemAPI ecsSystemAPI;
 
@@ -66,6 +69,8 @@ namespace ECS
 
 	template<typename T, size_t N>
 	using Array = std::array<T, N>;
+
+	using String = std::string;
 
 	// Typetraits
 	template <bool _Test, class _Ty = void>
@@ -83,6 +88,8 @@ namespace ECS
 	#define ECS_REALLOC(ptr, n)ecsSystemAPI.realloc_(ptr, n);
 	#define ECS_NEW_PLACEMENT(mem, T) new (mem) T()
 	#define ECS_FREE(ptr) ecsSystemAPI.free_(ptr)
+	#define ECS_STRDUP(str) ecsSystemAPI.strdup_(str);
+	#define ECS_STRSET(dst, src) ECS_FREE(*dst);  *dst = ECS_STRDUP(src)
 
 #ifndef __cplusplus
 #define ECS_CAST(T, V) ((T)(V))

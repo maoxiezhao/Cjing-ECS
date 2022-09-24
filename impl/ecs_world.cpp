@@ -73,7 +73,6 @@ namespace ECS
 		hooks->dtor(srcPtr, count, info);
 	}
 
-
 	inline void DefaultNoMoveDtor(void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo* info)
 	{
 		auto* hooks = &info->hooks;
@@ -115,6 +114,35 @@ namespace ECS
 	////////////////////////////////////////////////////////////////////////////////
 
 #define BuiltinCompDtor(type) type##_dtor
+#define BuiltinCompCopy(type) type##_copy
+#define BuiltinCompMove(type) type##_move
+
+	static void BuiltinCompDtor(NameComponent)(void* ptr, size_t count, const ComponentTypeInfo* info)
+	{
+		NameComponent* comps = static_cast<NameComponent*>(ptr);
+		if (comps->name)
+			ECS_FREE(comps->name);
+	}
+
+	static void BuiltinCompCopy(NameComponent)(const void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo* info)
+	{
+		const NameComponent* srcComp = static_cast<const NameComponent*>(srcPtr);
+		NameComponent* dstComp = static_cast<NameComponent*>(dstPtr);
+		ECS_STRSET(&dstComp->name, srcComp->name);
+		dstComp->hash = srcComp->hash;
+	}
+
+	static void BuiltinCompMove(NameComponent)(void* srcPtr, void* dstPtr, size_t count, const ComponentTypeInfo* info)
+	{
+		NameComponent* srcComp = static_cast<NameComponent*>(srcPtr);
+		NameComponent* dstComp = static_cast<NameComponent*>(dstPtr);
+		ECS_STRSET(&dstComp->name, NULL);
+		dstComp->name = srcComp->name;
+		dstComp->hash = srcComp->hash;
+
+		srcComp->name = NULL;
+		srcComp->hash = 0;
+	}
 
 	static void BuiltinCompDtor(TriggerComponent)(void* ptr, size_t count, const ComponentTypeInfo* info)
 	{
@@ -151,12 +179,29 @@ namespace ECS
 		return calloc(1, size);
 	}
 
+	static char* EcsSystemAPIStrdup(const char* str) 
+	{
+		if (str) 
+		{
+			int len = strlen(str);
+			char* result = (char*)ECS_MALLOC(len + 1);
+			ECS_ASSERT(result != NULL);
+			strcpy_s(result, len + 1, str);
+			return result;
+		}
+		else 
+		{
+			return NULL;
+		}
+	}
+
 	void DefaultSystemAPI(EcsSystemAPI& api)
 	{
 		api.malloc_ = malloc;
 		api.calloc_ = EcsSystemAPICalloc;
 		api.realloc_ = realloc;
 		api.free_ = free;
+		api.strdup_ = EcsSystemAPIStrdup;
 	}
 
 	void SetSystemAPI(const EcsSystemAPI& api)
@@ -669,9 +714,9 @@ namespace ECS
 
 		// Name component
 		info.ctor = Reflect::Ctor<NameComponent>();
-		info.dtor = Reflect::Dtor<NameComponent>();
-		info.copy = Reflect::Copy<NameComponent>();
-		info.move = Reflect::Move<NameComponent>();
+		info.dtor = BuiltinCompDtor(NameComponent);
+		info.copy = BuiltinCompCopy(NameComponent);
+		info.move = BuiltinCompMove(NameComponent);
 		info.onSet = [](Iterator* it) 
 		{
 			ECS_ASSERT(it->world != nullptr);
@@ -741,7 +786,8 @@ namespace ECS
 
 			// Name component
 			NameComponent* nameComponent = table->storageColumns[1].Get<NameComponent>(index);
-			nameComponent->name = _strdup(compName);
+			memset(nameComponent, 0, sizeof(NameComponent));
+			ECS_STRSET(&nameComponent->name, compName);
 			nameComponent->hash = Util::HashFunc(compName, strlen(compName));
 		};
 

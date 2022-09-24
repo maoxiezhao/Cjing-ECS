@@ -167,7 +167,7 @@ namespace ECS
 
 		if (name && !nameAssigned)
 		{
-			SetEntityPath(world, entity, scope, "::", name);
+			SetEntityPath(world, entity, scope, ".", name);
 			ECS_ASSERT(GetEntityName(world, entity) != nullptr);
 		}
 
@@ -187,14 +187,14 @@ namespace ECS
 				// Running in a single thread, we can just leave readonly mode
 				// to be enable to add tow entities with same name
 				SuspendReadonly(world, &state);
-				SetEntityPath(world, entity, scope, "::", name);
+				SetEntityPath(world, entity, scope, ".", name);
 				ResumeReadonly(world, &state);
 			}
 			else
 			{
 				// In multithreaded mode we can't leave readonly mode
 				// There is a risk to create entities with same name
-				SetEntityPath(world, entity, scope, "::", name);
+				SetEntityPath(world, entity, scope, ".", name);
 			}
 		}
 	}
@@ -213,7 +213,7 @@ namespace ECS
 		{
 			if (name != nullptr)
 			{
-				result = FindEntityByPath(world, scope, "::", name);
+				result = FindEntityByPath(world, scope, ".", name);
 				if (result != INVALID_ENTITYID)
 					nameAssigned = true;
 			}
@@ -371,11 +371,27 @@ namespace ECS
 		return ret;
 	}
 
+	EntityID GetRelationObject(WorldImpl* world, EntityID entity, EntityID relation, U32 index = 0)
+	{
+		EntityTable* table = GetTable(world, entity);
+		if (table == nullptr)
+			return INVALID_ENTITYID;
+
+		TableComponentRecord* record = GetTableRecord(world, table, ECS_MAKE_PAIR(relation, EcsPropertyNone));
+		if (record == nullptr)
+			return INVALID_ENTITYID;
+
+		if (index >= (U32)record->data.count)
+			return INVALID_ENTITYID;
+
+		return ECS_GET_PAIR_SECOND(table->type[record->data.column + index]);
+	}
+
 	EntityID FindEntityIDByName(WorldImpl* world, const char* name)
 	{
 		ECS_ASSERT(world != nullptr);
 		Stage* stage = GetStageFromWorld(&world);
-		return FindEntityByPath(world, stage->scope, "::", name);
+		return FindEntityByPath(world, stage->scope, ".", name);
 	}
 
 	void SetEntityName(WorldImpl* world, EntityID entity, const char* name)
@@ -390,7 +406,7 @@ namespace ECS
 		}
 
 		NameComponent nameComp = {};
-		nameComp.name = _strdup(name);
+		ECS_STRSET(&nameComp.name, name);
 		nameComp.hash = Util::HashFunc(name, strlen(name));
 		SetComponent(world, entity, ECS_ENTITY_ID(NameComponent), sizeof(NameComponent), &nameComp, false);
 		ModifiedComponent(world, entity, ECS_ENTITY_ID(NameComponent));
@@ -401,6 +417,50 @@ namespace ECS
 		ECS_ASSERT(IsEntityValid(world, entity));
 		const NameComponent* ptr = static_cast<const NameComponent*>(GetComponent(world, entity, ECS_ENTITY_ID(NameComponent)));
 		return ptr ? ptr->name : nullptr;
+	}
+
+	void GetEntityPath(WorldImpl* world, EntityID parent, EntityID entity, const char* sep, String& buf)
+	{
+		ECS_ASSERT(world != nullptr);
+		ECS_ASSERT(entity != INVALID_ENTITYID);
+		world = GetWorld(world);
+
+		const char* name;
+		char tmp[32];
+		EntityID cur = INVALID_ENTITYID;
+		if (IsEntityValid(world, entity))
+		{
+			cur = GetRelationObject(world, entity, EcsRelationChildOf, 0);
+			if (cur != INVALID_ENTITYID)
+			{
+				if (cur != parent)
+				{
+					GetEntityPath(world, parent, cur, sep, buf);
+					buf += sep;
+				}
+			}
+
+			name = GetEntityName(world, entity);
+			if (!name || strlen(name) == 0)
+			{
+				sprintf_s(tmp, 32, "%u", (U32)entity);
+				name = tmp;
+			}
+		}
+		else
+		{
+			sprintf_s(tmp, 32, "%u", (U32)entity);
+			name = tmp;
+		}
+
+		buf += name;
+	}
+
+	String GetEntityPath(WorldImpl* world, EntityID entity)
+	{
+		String path;
+		GetEntityPath(world, INVALID_ENTITYID, entity, ".", path);
+		return path;
 	}
 
 	EntityID SetEntityPath(WorldImpl* world, EntityID entity, EntityID parent, const char* sep, const char* path)
@@ -440,7 +500,7 @@ namespace ECS
 			{
 				if (name)
 					free(name);
-				name = _strdup(elem);
+				name = ECS_STRDUP(elem);
 
 				bool lastElem = false;
 				if (!GetPathElement(ptr, sep, NULL))
@@ -546,22 +606,6 @@ namespace ECS
 		auto it = std::find(entityType.begin(), entityType.end(), compID);
 		if (it != entityType.end())
 			entityType.erase(it);
-	}
-
-	EntityID GetRelationObject(WorldImpl* world, EntityID entity, EntityID relation, U32 index = 0)
-	{
-		EntityTable* table = GetTable(world, entity);
-		if (table == nullptr)
-			return INVALID_ENTITYID;
-
-		TableComponentRecord* record = GetTableRecord(world, table, ECS_MAKE_PAIR(relation, EcsPropertyNone));
-		if (record == nullptr)
-			return INVALID_ENTITYID;
-
-		if (index >= (U32)record->data.count)
-			return INVALID_ENTITYID;
-
-		return ECS_GET_PAIR_SECOND(table->type[record->data.column + index]);
 	}
 
 	EntityID GetParent(WorldImpl* world, EntityID entity)
