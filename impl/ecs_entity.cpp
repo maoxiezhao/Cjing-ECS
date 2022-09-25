@@ -499,7 +499,7 @@ namespace ECS
 			if (e == INVALID_ENTITYID)
 			{
 				if (name)
-					free(name);
+					ECS_FREE(name);
 				name = ECS_STRDUP(elem);
 
 				bool lastElem = false;
@@ -533,7 +533,7 @@ namespace ECS
 		}
 
 		if (name)
-			free(name);
+			ECS_FREE(name);
 
 		if (elem != buff)
 			ECS_FREE(elem);

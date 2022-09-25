@@ -110,7 +110,7 @@ namespace ECS
 	template<typename T, typename... Args>
 	inline T* ECS_NEW_OBJECT(Args&&... args)
 	{
-		return new(malloc(sizeof(T))) T(std::forward<Args>(args)...);
+		return new(ECS_MALLOC(sizeof(T))) T(std::forward<Args>(args)...);
 	}
 
 	template<typename T>
@@ -121,7 +121,7 @@ namespace ECS
 			if (!__has_trivial_destructor(T)) {
 				ptr->~T();
 			}
-			free(ptr);
+			ECS_FREE(ptr);
 		}
 	}
 
