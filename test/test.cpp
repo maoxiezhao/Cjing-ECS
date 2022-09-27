@@ -97,6 +97,34 @@ TEST_CASE("Name", "ECS")
     CHECK(strcmp(path.c_str(), "A.B") == 0);
 }
 
+TEST_CASE("Each", "ECS")
+{
+    ECS::World world;
+    for (int i = 0; i < 500; i++)
+    {
+        world.Entity((std::string("A") + std::to_string(i)).c_str())
+            .Add<PositionComponent>()
+            .Add<VelocityComponent>();
+    }
+    for (int i = 0; i < 5; i++)
+    {
+        world.Entity().Add<PositionComponent>();
+    }
+    for (int i = 0; i < 25; i++)
+    {
+        world.Entity().Add<PositionComponent>()
+            .Add<TestComponent>();
+    }
+
+    int times = 0;
+    world.Each<PositionComponent>([&](ECS::Entity entity, PositionComponent& pos) {
+            
+        times++;
+    });
+
+    CHECK(times == 530);
+}
+
 TEST_CASE("System", "ECS")
 {
     I32 updateTimes = 0;

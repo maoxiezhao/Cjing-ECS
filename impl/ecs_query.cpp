@@ -245,6 +245,7 @@ namespace ECS
 		Iterator iter = {};
 		iter.world = world;
 		iter.next = NextTermIter;
+		iter.termCount = 1;
 
 		// Finally init iterator
 		InitIterator(iter, ITERATOR_CACHE_MASK_ALL);
@@ -1395,7 +1396,7 @@ namespace ECS
 		it->columns = &termIt.column;
 		it->terms = &termIt.term;
 		it->sizes = &termIt.size;
-		it->ptrs = nullptr;
+		it->ptrs = &termIt.ptr;
 
 		if (!TermIteratorNext(world, &termIt))
 			goto done;

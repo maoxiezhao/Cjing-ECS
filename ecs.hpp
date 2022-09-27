@@ -296,6 +296,16 @@ namespace ECS
 				func(type);
 		}
 
+		template<typename T, typename Func>
+		inline void Each(Func&& func)
+		{
+			Term term = {};
+			term.compID = ComponentType<T>::ID(*world);
+			auto it = GetTermIterator(world, term);
+			while(NextTermIter(&it))
+				EachInvoker<Func, T>(ECS_MOV(func)).Invoke(&it);
+		}
+
 		template<typename Func>
 		inline void EachChildren(EntityID entity, Func&& func)
 		{
@@ -342,6 +352,7 @@ namespace ECS
 
 		ECS::Entity Entity(const char* name)const;
 		ECS::Entity Entity()const;
+		ECS::Entity Entity(ECS::EntityID id)const;
 		ECS::Entity Prefab(const char* name)const;
 		ECS::Entity FindEntity(const char* name)const;
 
@@ -1203,6 +1214,11 @@ namespace ECS
 	inline ECS::Entity World::Entity() const
 	{
 		return ECS::Entity(world);
+	}
+
+	inline ECS::Entity World::Entity(ECS::EntityID id)const
+	{
+		return ECS::Entity(world, id);
 	}
 
 	inline ECS::Entity World::Prefab(const char* name) const
