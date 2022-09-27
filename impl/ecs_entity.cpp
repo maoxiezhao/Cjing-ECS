@@ -409,6 +409,7 @@ namespace ECS
 		ECS_STRSET(&nameComp.name, name);
 		nameComp.hash = Util::HashFunc(name, strlen(name));
 		SetComponent(world, entity, ECS_ENTITY_ID(NameComponent), sizeof(NameComponent), &nameComp, false);
+		ECS_FREE(nameComp.name);
 		ModifiedComponent(world, entity, ECS_ENTITY_ID(NameComponent));
 	}
 
