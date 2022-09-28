@@ -992,8 +992,14 @@ namespace ECS
 
 	void CommitTables(WorldImpl* world, EntityID entity, EntityInfo* info, EntityTable* dstTable, EntityTableDiff& diff, bool construct)
 	{
-		EntityTable* srcTable = info != nullptr ? info->table : nullptr;
+		EntityTable* srcTable = nullptr;
+		if (info != nullptr)
+			srcTable = info->table;
+
 		ECS_ASSERT(dstTable != nullptr);
+		if (srcTable == dstTable)
+			return;
+		
 		if (srcTable != nullptr)
 		{
 			if (!dstTable->type.empty()) {
