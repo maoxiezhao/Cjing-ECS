@@ -728,7 +728,7 @@ namespace ECS
 			return static_cast<C*>(GetMutableComponent(world, entityID, compID));
 		}
 
-		Entity GetParent()
+		Entity GetParent()const
 		{
 			EntityID parent = ECS::GetParent(world, entityID);
 			return Entity(world, parent);
