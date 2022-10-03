@@ -551,7 +551,7 @@ namespace ECS
 		Self& Set(const T& value)
 		{
 			EntityID compID = ComponentType<T>::ID(*world);
-			SetComponent(entityID, compID, value);
+			SetComponent(world, entityID, compID, value);
 			ModifiedComponent(world, entityID, compID);
 			return ToBase();
 		}
@@ -560,7 +560,7 @@ namespace ECS
 		Self& Set(T&& value)
 		{
 			EntityID compID = ComponentType<T>::ID(*world);
-			SetComponent(entityID, compID, ECS_FWD(value));
+			SetComponent(world, entityID, compID, ECS_FWD(value));
 			ModifiedComponent(world, entityID, compID);
 			return ToBase();
 		}
@@ -694,7 +694,6 @@ namespace ECS
 			EntityID compID = ComponentType<P>::ID(*world);
 			return static_cast<const C*>(GetComponent(world, entityID, compID));
 		}
-
 
 		template<typename T>
 		T* GetMut()const

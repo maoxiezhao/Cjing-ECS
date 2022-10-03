@@ -75,6 +75,19 @@ TEST_CASE("Basic", "ECS")
     comp->x = 1.0f;
     const VelocityComponent* compConst2 = a.Get<VelocityComponent>();
     CHECK(compConst->x == 1.0f);
+
+    VelocityComponent v1 = {};
+    v1.x = 4.0f;
+    v1.y = 12.0;
+    a.Set<VelocityComponent>(v1);
+    auto c = a.Get<VelocityComponent>();
+    CHECK(c->y == 12.0f);
+
+    VelocityComponent v2 = {};
+    v2.x = 7.0f;
+    a.Set<VelocityComponent>(std::move(v2));
+    auto d = a.Get<VelocityComponent>();
+    CHECK(d->x == 7.0f);
 }
 
 TEST_CASE("Name", "ECS")
